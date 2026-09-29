@@ -48,6 +48,8 @@ from modules.analytics import (
     opd_summary,
     warning_status,
 )
+from database.auth import authenticate_user, init_auth_schema, seed_default_users
+from database.connection import get_engine
 from services.data_source import active_source_name, load_daily_data as load_canonical_daily_data
 from services.work_calendar import build_work_calendar, load_calendar_overrides, summarize_work_calendar_period
 from services.activity_log import APP_TIMEZONE, load_system_activities, log_system_activity
@@ -55,6 +57,8 @@ from modules.attendance_compliance import calculate_monthly_attendance_complianc
 from modules.attendance_trend import TREND_METRICS, aggregate_attendance_trend
 from modules.attendance_indicators import prepare_daily_indicators, summarize_attendance_indicators
 from modules.display import format_percentage_exact, safe_display
+from modules.user_management import show_user_management_page
+from modules.opd_management import show_opd_management_page
 
 LOGGER = logging.getLogger(__name__)
 
@@ -66,8 +70,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-VALID_USERNAME = "admin"
-VALID_PASSWORD = "admin123"
 EXTRACTION_TOTAL_PAGES = 500
 EXTRACTION_ANOMALY_PAGES = 10
 
@@ -75,15 +77,55 @@ EXTRACTION_ANOMALY_PAGES = 10
 def initialize_session() -> None:
     st.session_state.setdefault("is_logged_in", False)
     st.session_state.setdefault("username", "")
+    st.session_state.setdefault("user_fullname", "")
+    st.session_state.setdefault("user_role", "")
+    st.session_state.setdefault("user_id", None)
 
 
-def login(username: str, password: str) -> bool:
-    return username == VALID_USERNAME and password == VALID_PASSWORD
+def login(username: str, password: str) -> tuple[bool, str]:
+    """Autentikasi pengguna menggunakan database PostgreSQL."""
+    try:
+        engine = get_engine()
+        success, user_data, message = authenticate_user(engine, username, password)
+        if success and user_data:
+            st.session_state.is_logged_in = True
+            st.session_state.username = user_data["username"]
+            st.session_state.user_fullname = user_data.get("nama_lengkap") or user_data["username"]
+            st.session_state.user_role = user_data.get("role", "admin")
+            st.session_state.user_id = user_data.get("id")
+            try:
+                log_system_activity(
+                    "auth",
+                    "User Login",
+                    f"Pengguna '{user_data['username']}' ({user_data.get('role', 'admin')}) berhasil login via PostgreSQL.",
+                    metadata={"username": user_data["username"], "role": user_data.get("role")},
+                )
+            except Exception:
+                pass
+            return True, message
+        return False, message
+    except Exception as exc:
+        LOGGER.warning("Gagal autentikasi via PostgreSQL: %s", exc)
+        return False, f"Gagal terhubung ke database PostgreSQL: {exc}"
 
 
 def logout() -> None:
+    current_user = st.session_state.get("username", "")
+    if current_user:
+        try:
+            log_system_activity(
+                "auth",
+                "User Logout",
+                f"Pengguna '{current_user}' telah logout dari sistem.",
+                metadata={"username": current_user},
+            )
+        except Exception:
+            pass
     st.session_state.is_logged_in = False
     st.session_state.username = ""
+    st.session_state.user_fullname = ""
+    st.session_state.user_role = ""
+    st.session_state.user_id = None
     st.rerun()
 
 
@@ -697,27 +739,47 @@ def show_login_page() -> None:
         <style>
             .stApp { background: linear-gradient(135deg, #0b2545, #1d4e75); }
             header[data-testid="stHeader"] { background: transparent; }
-            .login-box { box-sizing: border-box; width: min(92vw, 440px); margin: 11vh auto 0; padding: 2.3rem 2.3rem 1rem; background: white; border-radius: 16px 16px 0 0; box-shadow: 0 16px 45px rgba(0,0,0,.2); }
+            .login-box { box-sizing: border-box; width: min(92vw, 440px); margin: 9vh auto 0; padding: 2rem 2.3rem 1rem; background: white; border-radius: 16px 16px 0 0; box-shadow: 0 16px 45px rgba(0,0,0,.2); }
             .login-box h1 { color: #102a43; font-size: 1.65rem; margin-bottom: .2rem; }
-            .login-box p { color: #64748b; }
-            div[data-testid="stForm"] { box-sizing: border-box; width: min(92vw, 440px); margin: 0 auto; padding: 1rem 2.3rem 2.3rem; border: 0; border-radius: 0 0 16px 16px; background: white; box-shadow: 0 16px 45px rgba(0,0,0,.2); }
+            .login-box p { color: #64748b; font-size: 0.95rem; margin-bottom: 0.4rem; }
+            .db-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 0.75rem; background: #e0f2fe; color: #0369a1; padding: 3px 8px; border-radius: 999px; font-weight: 600; margin-bottom: 0.5rem; }
+            div[data-testid="stForm"] { box-sizing: border-box; width: min(92vw, 440px); margin: 0 auto; padding: 0.8rem 2.3rem 1.8rem; border: 0; border-radius: 0 0 16px 16px; background: white; box-shadow: 0 16px 45px rgba(0,0,0,.2); }
             div[data-testid="stForm"] > div { border: 0; padding: 0; }
+            .demo-info-card { width: min(92vw, 440px); margin: 1.2rem auto 0; padding: 0.9rem 1.2rem; background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 12px; color: #f1f5f9; font-size: 0.82rem; backdrop-filter: blur(8px); }
+            .demo-info-card strong { color: #38bdf8; }
         </style>
-        <div class="login-box"><h1>🛡️ EWS Kehadiran</h1><p>Masuk untuk memantau disiplin kehadiran pegawai.</p></div>
+        <div class="login-box">
+            <span class="db-badge">🐘 PostgreSQL Database Auth</span>
+            <h1>🛡️ EWS Kehadiran</h1>
+            <p>Masuk untuk memantau disiplin kehadiran pegawai berbasis database PostgreSQL.</p>
+        </div>
         """,
         unsafe_allow_html=True,
     )
     with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Kata sandi", type="password")
-        submitted = st.form_submit_button("Masuk", use_container_width=True)
+        username = st.text_input("Username", placeholder="Masukkan username")
+        password = st.text_input("Kata sandi", type="password", placeholder="Masukkan kata sandi")
+        submitted = st.form_submit_button("Masuk ke Sistem", use_container_width=True)
     if submitted:
-        if login(username, password):
-            st.session_state.is_logged_in = True
-            st.session_state.username = username
+        success, message = login(username, password)
+        if success:
             st.rerun()
-        st.error("Username atau kata sandi salah.")
-    st.caption("Akun demo: admin / admin123")
+        else:
+            st.error(message)
+
+    st.markdown(
+        """
+        <div class="demo-info-card">
+            <div style="font-weight: 600; margin-bottom: 4px; color: #e2e8f0;">🔑 Akun Database Tersedia:</div>
+            <ul style="margin: 0; padding-left: 1.2rem; line-height: 1.5;">
+                <li><strong>admin</strong> / <code>admin123</code> (Administrator EWS)</li>
+                <li><strong>operator</strong> / <code>operator123</code> (Operator Presensi)</li>
+                <li><strong>pimpinan</strong> / <code>pimpinan123</code> (Pimpinan Eksekutif)</li>
+            </ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def show_dashboard_legacy() -> None:
@@ -5885,8 +5947,10 @@ with st.sidebar:
         "👤 Detail Pegawai": "Detail Pegawai",
         "📄 Laporan Ketidakhadiran": "Laporan Ketidakhadiran",
         "📅 Master Kalender Kerja": "Master Kalender Kerja",
+        "🏛️ Master OPD / Dinas": "Master OPD",
         "✅ Action Center": "Action Center",
         "🕒 Audit Trail": "Audit Trail",
+        "👥 Manajemen Pengguna": "Manajemen Pengguna",
     }
     if navigation_target:
         navigation_target = next((label for label, value in page_options.items() if value == navigation_target), navigation_target)
@@ -5913,7 +5977,11 @@ elif selected_page == "Laporan Ketidakhadiran":
     show_tk_report_page()
 elif selected_page == "Master Kalender Kerja":
     show_work_calendar_page()
+elif selected_page == "Master OPD":
+    show_opd_management_page(get_engine())
 elif selected_page == "Action Center":
     show_action_center_page_focus()
+elif selected_page == "Manajemen Pengguna":
+    show_user_management_page(get_engine())
 else:
     show_audit_trail_page()

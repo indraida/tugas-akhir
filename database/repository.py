@@ -42,6 +42,10 @@ Index("idx_presensi_periode", presensi_harian.c.periode_tahun, presensi_harian.c
 
 def create_schema(engine: Engine) -> None:
     metadata.create_all(engine)
+    from database.auth import init_auth_schema
+    init_auth_schema(engine)
+    from database.opd import init_opd_schema
+    init_opd_schema(engine)
 
 
 def _time_or_none(value: object) -> time | None:

@@ -1,0 +1,33 @@
+services:
+  # Layanan Database
+  db:
+    image: postgres:15-alpine
+    container_name: postgres_db
+    restart: always
+    environment:
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mysecretpassword
+      POSTGRES_DB: mydb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Layanan Aplikasi Streamlit
+  web:
+    build: .
+    container_name: streamlit_app
+    restart: always
+    ports:
+      - "8501:8501"
+    environment:
+      # URL Koneksi untuk SQLAlchemy/Psycopg2
+      - DATABASE_URL=postgresql://myuser:mysecretpassword@db:5432/mydb
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
+

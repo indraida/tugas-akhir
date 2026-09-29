@@ -1,2 +1,71 @@
-"""Database layer untuk persistensi hasil ETL presensi."""
+"""Database layer untuk persistensi presensi dan autentikasi PostgreSQL."""
+
+from database.auth import (
+    authenticate_user,
+    create_user,
+    delete_user,
+    get_user_by_id,
+    get_user_by_username,
+    hash_password,
+    init_auth_schema,
+    list_users,
+    seed_default_users,
+    toggle_user_status,
+    update_user,
+    update_user_password,
+    verify_password,
+)
+from database.connection import check_database_connection, get_engine
+from database.opd import (
+    OPD_JENIS_CHOICES,
+    create_opd,
+    delete_opd,
+    get_opd_by_id,
+    get_opd_by_kode,
+    init_opd_schema,
+    list_opds,
+    opd_table,
+    restore_opd,
+    seed_default_opds,
+    toggle_opd_status,
+    update_opd,
+)
+from database.repository import (
+    create_schema,
+    load_attendance_from_db,
+    save_daily_attendance_to_db,
+)
+
+__all__ = [
+    "OPD_JENIS_CHOICES",
+    "authenticate_user",
+    "check_database_connection",
+    "create_opd",
+    "create_schema",
+    "create_user",
+    "delete_opd",
+    "delete_user",
+    "get_engine",
+    "get_opd_by_id",
+    "get_opd_by_kode",
+    "get_user_by_id",
+    "get_user_by_username",
+    "hash_password",
+    "init_auth_schema",
+    "init_opd_schema",
+    "list_opds",
+    "list_users",
+    "load_attendance_from_db",
+    "opd_table",
+    "restore_opd",
+    "save_daily_attendance_to_db",
+    "seed_default_opds",
+    "seed_default_users",
+    "toggle_opd_status",
+    "toggle_user_status",
+    "update_opd",
+    "update_user",
+    "update_user_password",
+    "verify_password",
+]
 
