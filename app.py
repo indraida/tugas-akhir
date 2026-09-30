@@ -59,9 +59,10 @@ from modules.attendance_indicators import prepare_daily_indicators, summarize_at
 from modules.display import format_percentage_exact, safe_display
 from modules.user_management import show_user_management_page
 from modules.opd_management import show_opd_management_page
+from modules.pegawai_management import show_pegawai_management_page
+from modules.presensi_data_management import show_presensi_data_page
 
 LOGGER = logging.getLogger(__name__)
-
 
 st.set_page_config(
     page_title="EWS Kehadiran Pegawai",
@@ -129,39 +130,54 @@ def logout() -> None:
     st.rerun()
 
 
+def get_active_opd_names() -> list[str]:
+    """Ambil daftar nama/singkatan OPD aktif dari database PostgreSQL."""
+    try:
+        engine = get_engine()
+        opds = list_opds(engine, aktif_only=True)
+        names: list[str] = []
+        for o in opds:
+            if o.get("nama") and o["nama"] not in names:
+                names.append(o["nama"])
+            if o.get("singkatan") and o["singkatan"] not in names:
+                names.append(o["singkatan"])
+        if names:
+            return names
+    except Exception:
+        pass
+    return ["BAPPEDA", "BKAD", "BKD", "DISKOMINFO", "INSPEKTORAT", "ROHUKUM", "ROORGANISASI"]
+
+
 def load_legacy_employee_data() -> pd.DataFrame:
-    """Data contoh absensi yang bisa diganti dengan sumber data instansi."""
-    data = pd.DataFrame(
-        [
-            ["PGW-001", "Andi Pratama", "Administrasi", "Januari", 7, 3, 14, 18, 8.12, "Rabu"],
-            ["PGW-002", "Siti Rahma", "Keuangan", "Januari", 4, 1, 9, 20, 7.56, "Senin"],
-            ["PGW-003", "Budi Santoso", "Teknologi Informasi", "Januari", 1, 0, 2, 22, 7.38, "Selasa"],
-            ["PGW-004", "Dewi Lestari", "Administrasi", "Januari", 0, 0, 1, 22, 7.29, "Kamis"],
-            ["PGW-005", "Rizky Maulana", "Keuangan", "Januari", 3, 2, 8, 19, 8.03, "Jumat"],
-            ["PGW-006", "Nadia Putri", "Teknologi Informasi", "Januari", 2, 0, 5, 21, 7.47, "Rabu"],
-            ["PGW-007", "Fajar Nugroho", "Administrasi", "Februari", 8, 2, 16, 17, 8.18, "Senin"],
-            ["PGW-008", "Maya Sari", "Keuangan", "Februari", 5, 1, 11, 19, 7.51, "Selasa"],
-            ["PGW-009", "Dimas Saputra", "Teknologi Informasi", "Februari", 1, 0, 3, 21, 7.34, "Rabu"],
-            ["PGW-010", "Lina Marlina", "Administrasi", "Februari", 0, 0, 0, 22, 7.25, "Kamis"],
-            ["PGW-011", "Arif Hidayat", "Keuangan", "Februari", 3, 1, 7, 20, 7.58, "Jumat"],
-            ["PGW-012", "Citra Anggraini", "Teknologi Informasi", "Februari", 2, 0, 4, 21, 7.43, "Senin"],
-            ["PGW-013", "Yusuf Kurniawan", "Administrasi", "Maret", 6, 2, 13, 18, 8.08, "Selasa"],
-            ["PGW-014", "Rani Wulandari", "Keuangan", "Maret", 4, 0, 10, 20, 7.53, "Rabu"],
-            ["PGW-015", "Galang Prakoso", "Teknologi Informasi", "Maret", 1, 0, 2, 22, 7.31, "Kamis"],
-            ["PGW-016", "Putri Amelia", "Administrasi", "Maret", 0, 0, 1, 22, 7.27, "Jumat"],
-            ["PGW-017", "Hendra Wijaya", "Keuangan", "Maret", 3, 1, 6, 20, 7.49, "Senin"],
-            ["PGW-018", "Vina Oktavia", "Teknologi Informasi", "Maret", 2, 0, 5, 21, 7.41, "Selasa"],
-        ],
-        columns=[
-            "NIP", "Nama Pegawai", "Unit Kerja", "Bulan", "TK", "Cuti", "Terlambat",
-            "Hari Kerja", "Jam Datang", "Hari Dominan",
-        ],
-    )
-    data["WFH"] = [2, 1, 1, 0, 2, 1, 1, 2, 0, 1, 1, 2, 2, 1, 0, 1, 2, 1]
-    data["DL"] = [1, 0, 1, 1, 0, 1, 0, 1, 2, 0, 1, 0, 1, 2, 1, 0, 1, 2]
-    data["Jabatan"] = "Pelaksana"
-    data["Pangkat/Golongan"] = "III/a"
-    return data
+    """Muat master data pegawai langsung dari database PostgreSQL."""
+    try:
+        engine = get_engine()
+        peg_list = list_pegawai(engine, aktif_only=True)
+        if peg_list:
+            df = pd.DataFrame(peg_list)
+            result = pd.DataFrame({
+                "NIP": df["nip"].astype(str),
+                "Nama Pegawai": df["nama_pegawai"].fillna("-"),
+                "Unit Kerja": df["nama_opd"].fillna(df["singkatan_opd"]).fillna("-"),
+                "Bulan": "Januari",
+                "TK": 0,
+                "Cuti": 0,
+                "Terlambat": 0,
+                "Hari Kerja": 22,
+                "Jam Datang": 7.30,
+                "Hari Dominan": "Senin",
+                "WFH": 0,
+                "DL": 0,
+                "Jabatan": df.get("jabatan", "Pelaksana"),
+                "Pangkat/Golongan": df.get("pangkat_golongan", "-"),
+            })
+            return result
+    except Exception:
+        pass
+    return pd.DataFrame(columns=[
+        "NIP", "Nama Pegawai", "Unit Kerja", "Bulan", "TK", "Cuti", "Terlambat",
+        "Hari Kerja", "Jam Datang", "Hari Dominan", "WFH", "DL", "Jabatan", "Pangkat/Golongan"
+    ])
 
 
 MONTH_NAMES = {
@@ -170,20 +186,7 @@ MONTH_NAMES = {
     "09": "September", "10": "Oktober", "11": "November", "12": "Desember",
 }
 
-# Batasi ruang uji ke tepat 10 OPD. Ganti nama placeholder dengan nama OPD resmi
-# setelah master pegawai sebenarnya tersedia.
-OPD_AKTIF = [
-    "Administrasi",
-    "Keuangan",
-    "DINAS KOMUNIKASI DAN INFORMATIKA PROV KALBAR",
-    "OPD 4",
-    "OPD 5",
-    "OPD 6",
-    "OPD 7",
-    "OPD 8",
-    "OPD 9",
-    "OPD 10",
-]
+OPD_AKTIF = get_active_opd_names()
 
 class EPresensiAccessError(RuntimeError):
     """Kegagalan akses endpoint yang perlu diketahui pengguna."""
@@ -250,14 +253,15 @@ ambil_data_presensi = ambil_presensi_pegawai
 def ambil_presensi_10_opd(
     bulan, tahun, df_pegawai: pd.DataFrame
 ) -> tuple[pd.DataFrame, list[dict]]:
-    """Mengambil presensi master pegawai pada OPD_AKTIF secara berurutan."""
+    """Mengambil presensi master pegawai secara berurutan."""
     required = {"NIP", "Nama", "OPD"}
     missing = required.difference(df_pegawai.columns)
     if missing:
         raise ValueError(f"Kolom master pegawai belum lengkap: {', '.join(sorted(missing))}")
 
+    active_opds = get_active_opd_names()
     pegawai_aktif = (
-        df_pegawai[df_pegawai["OPD"].isin(OPD_AKTIF) | df_pegawai["OPD"].fillna("").eq("")]
+        df_pegawai[df_pegawai["OPD"].isin(active_opds) | df_pegawai["OPD"].fillna("").eq("")]
         .dropna(subset=["NIP"])
         .drop_duplicates("NIP")
     )
@@ -276,8 +280,6 @@ def ambil_presensi_10_opd(
             presensi = presensi.copy()
             api_nama = str(presensi["Nama"].iloc[0])
             api_opd = str(presensi["OPD"].iloc[0])
-            if api_opd not in OPD_AKTIF:
-                raise ValueError(f"OPD dari API tidak termasuk OPD_AKTIF: {api_opd}")
             presensi["NIP"] = str(row.NIP)
             presensi["Nama"] = row.Nama if str(row.Nama).strip() else api_nama
             presensi["OPD"] = row.OPD if str(row.OPD).strip() else api_opd
@@ -355,8 +357,19 @@ def _epresensi_to_dashboard(raw: pd.DataFrame, bulan: str, nip: str) -> pd.DataF
 
 
 def _master_pegawai_lama() -> pd.DataFrame:
-    master = load_legacy_employee_data()[["NIP", "Nama Pegawai", "Unit Kerja"]].copy()
-    return master.rename(columns={"Nama Pegawai": "Nama", "Unit Kerja": "OPD"}).drop_duplicates("NIP")
+    try:
+        engine = get_engine()
+        peg_list = list_pegawai(engine, aktif_only=True)
+        if peg_list:
+            df = pd.DataFrame(peg_list)
+            return pd.DataFrame({
+                "NIP": df["nip"].astype(str),
+                "Nama": df["nama_pegawai"].fillna("-"),
+                "OPD": df["nama_opd"].fillna(df["singkatan_opd"]).fillna("-"),
+            }).drop_duplicates("NIP")
+    except Exception:
+        pass
+    return pd.DataFrame(columns=["NIP", "Nama", "OPD"])
 
 
 def _master_pegawai_aktif() -> pd.DataFrame:
@@ -369,7 +382,19 @@ def _master_pegawai_aktif() -> pd.DataFrame:
 
 
 def _excel_source_signature() -> tuple[tuple[str, int, int], ...]:
-    """Fingerprint berkas agar cache diperbarui ketika Excel ditambah/diubah."""
+    """Fingerprint berkas / database agar cache diperbarui ketika data berubah."""
+    try:
+        if active_source_name() == "PostgreSQL":
+            engine = get_engine()
+            with engine.connect() as conn:
+                from database.repository import presensi_harian
+                cnt = conn.execute(select(func.count(presensi_harian.c.id))).scalar() or 0
+                max_upd = conn.execute(select(func.max(presensi_harian.c.updated_at))).scalar()
+                max_str = str(max_upd) if max_upd else "init"
+                return (("postgres", int(cnt), int(hash(max_str))),)
+    except Exception:
+        pass
+
     from pathlib import Path
 
     return tuple(
@@ -378,7 +403,7 @@ def _excel_source_signature() -> tuple[tuple[str, int, int], ...]:
     )
 
 
-@st.cache_data(show_spinner="Memuat data presensi Excel...")
+@st.cache_data(show_spinner="Memuat data presensi...")
 def _load_excel_daily_data(
     signature: tuple[tuple[str, int, int], ...],
 ) -> pd.DataFrame:
@@ -5948,9 +5973,11 @@ with st.sidebar:
         "📄 Laporan Ketidakhadiran": "Laporan Ketidakhadiran",
         "📅 Master Kalender Kerja": "Master Kalender Kerja",
         "🏛️ Master OPD / Dinas": "Master OPD",
+        "👥 Master Data Pegawai": "Master Pegawai",
+        "📋 Data Presensi & Periode": "Data Presensi",
         "✅ Action Center": "Action Center",
         "🕒 Audit Trail": "Audit Trail",
-        "👥 Manajemen Pengguna": "Manajemen Pengguna",
+        "🔐 Manajemen Pengguna": "Manajemen Pengguna",
     }
     if navigation_target:
         navigation_target = next((label for label, value in page_options.items() if value == navigation_target), navigation_target)
@@ -5979,6 +6006,10 @@ elif selected_page == "Master Kalender Kerja":
     show_work_calendar_page()
 elif selected_page == "Master OPD":
     show_opd_management_page(get_engine())
+elif selected_page == "Master Pegawai":
+    show_pegawai_management_page(get_engine())
+elif selected_page == "Data Presensi":
+    show_presensi_data_page(get_engine())
 elif selected_page == "Action Center":
     show_action_center_page_focus()
 elif selected_page == "Manajemen Pengguna":

@@ -6,8 +6,13 @@ from modules.excel_parser import build_dashboard_dataframe
 from services.data_source import active_source_name, postgres_to_canonical
 
 
-def test_default_source_is_excel(monkeypatch):
+def test_default_source_is_postgres(monkeypatch):
     monkeypatch.delenv("DATA_SOURCE", raising=False)
+    assert active_source_name() == "PostgreSQL"
+
+
+def test_explicit_excel_source(monkeypatch):
+    monkeypatch.setenv("DATA_SOURCE", "excel")
     assert active_source_name() == "Excel"
 
 

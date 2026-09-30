@@ -21,12 +21,12 @@ DAY_NAMES = {0: "Senin", 1: "Selasa", 2: "Rabu", 3: "Kamis", 4: "Jumat", 5: "Sab
 
 
 def active_source_name() -> str:
-    value = os.getenv("DATA_SOURCE", "excel").strip().lower()
+    value = os.getenv("DATA_SOURCE", "postgres").strip().lower()
     if value in {"postgres", "postgresql"}:
         return "PostgreSQL"
     if value == "excel":
         return "Excel"
-    raise RuntimeError("DATA_SOURCE harus bernilai 'excel' atau 'postgres'.")
+    return "PostgreSQL"
 
 
 def postgres_to_canonical(frame: pd.DataFrame) -> pd.DataFrame:

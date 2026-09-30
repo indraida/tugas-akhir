@@ -16,13 +16,13 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
-LOGGER = logging.getLogger(__name__)
+from database.schema import metadata
 
-auth_metadata = MetaData()
+LOGGER = logging.getLogger(__name__)
 
 users = Table(
     "users",
-    auth_metadata,
+    metadata,
     Column("id", BigInteger, primary_key=True, autoincrement=True),
     Column("username", String(50), nullable=False, unique=True),
     Column("password_hash", String(255), nullable=False),
@@ -88,7 +88,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def init_auth_schema(engine: Engine) -> None:
     """Buat tabel users jika belum ada."""
-    auth_metadata.create_all(engine)
+    metadata.create_all(engine)
 
 
 DEFAULT_SEEDED_USERS = [

@@ -14,7 +14,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import Engine
 
 
-metadata = MetaData()
+from database.schema import metadata
+
 presensi_harian = Table(
     "presensi_harian",
     metadata,
@@ -46,6 +47,12 @@ def create_schema(engine: Engine) -> None:
     init_auth_schema(engine)
     from database.opd import init_opd_schema
     init_opd_schema(engine)
+    from database.pegawai import init_pegawai_schema
+    init_pegawai_schema(engine)
+    from database.periode import init_periode_schema
+    init_periode_schema(engine)
+    from database.presensi import init_presensi_schema
+    init_presensi_schema(engine)
 
 
 def _time_or_none(value: object) -> time | None:
@@ -154,13 +161,51 @@ def load_attendance_from_db(
     engine: Engine, year: int | None = None, month: int | None = None,
     opd: str | None = None,
 ) -> pd.DataFrame:
+    create_schema(engine)
     statement = select(presensi_harian)
     if year is not None:
-        statement = statement.where(presensi_harian.c.periode_tahun == year)
+        statement = statement.where(presensi_harian.c.periode_tahun == int(year))
     if month is not None:
-        statement = statement.where(presensi_harian.c.periode_bulan == month)
-    if opd is not None:
+        statement = statement.where(presensi_harian.c.periode_bulan == int(month))
+    if opd is not None and opd != "Semua OPD":
         statement = statement.where(presensi_harian.c.opd == opd)
     with engine.connect() as connection:
-        return pd.read_sql(statement, connection)
+        df = pd.read_sql(statement, connection)
+    
+    if not df.empty:
+        return df
+
+    # Jika tabel presensi_harian kosong, ambil dari tabel relasional presensi
+    try:
+        from database.presensi import list_presensi_data
+        rel_df = list_presensi_data(engine, limit=100000)
+        if not rel_df.empty:
+            mapped = pd.DataFrame({
+                "id": rel_df["id_presensi"],
+                "nip": rel_df["nip"],
+                "nama_pegawai": rel_df["nama_pegawai"],
+                "opd": rel_df["nama_opd"].fillna(rel_df["singkatan_opd"]),
+                "tanggal": rel_df["tanggal_presensi"],
+                "jam_masuk": rel_df["jam_masuk"],
+                "jam_pulang": rel_df["jam_pulang"],
+                "status_presensi": rel_df["status_presensi"],
+                "keterlambatan_menit": rel_df["keterlambatan_menit"],
+                "periode_bulan": rel_df["periode_bulan"],
+                "periode_tahun": rel_df["periode_tahun"],
+                "sumber_file": rel_df["sumber_data"],
+                "created_at": rel_df["waktu_insert"],
+                "updated_at": rel_df["waktu_update"],
+            })
+            if year is not None:
+                mapped = mapped[mapped["periode_tahun"] == int(year)]
+            if month is not None:
+                mapped = mapped[mapped["periode_bulan"] == int(month)]
+            if opd is not None and opd != "Semua OPD":
+                mapped = mapped[mapped["opd"] == opd]
+            return mapped
+    except Exception:
+        pass
+
+    return df
+
 

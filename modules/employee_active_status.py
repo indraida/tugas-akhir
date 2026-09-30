@@ -19,9 +19,41 @@ MONTH_NUMBERS = {
 
 
 def load_inactive_employee_config(path: str | Path = STATUS_FILE) -> pd.DataFrame:
-    """Baca konfigurasi dengan NIP sebagai string, bukan angka."""
-    source_path = Path(path)
+    """Baca status pegawai nonaktif dari PostgreSQL atau fallback ke file konfigurasi."""
     columns = ["NIP", "Tanggal Efektif", "Status", "Keterangan"]
+    
+    # 1. Coba baca dari database PostgreSQL
+    try:
+        from database.connection import get_engine
+        from database.pegawai import pegawai_table
+        from sqlalchemy import select, or_
+        engine = get_engine()
+        with engine.connect() as conn:
+            stmt = select(
+                pegawai_table.c.nip,
+                pegawai_table.c.aktif,
+                pegawai_table.c.deleted_at,
+                pegawai_table.c.updated_at,
+            ).where(
+                or_(pegawai_table.c.aktif.is_(False), pegawai_table.c.deleted_at.is_not(None))
+            )
+            rows = conn.execute(stmt).all()
+            if rows:
+                records = []
+                for r in rows:
+                    eff_date = r.deleted_at or r.updated_at or pd.Timestamp("2026-01-01")
+                    records.append({
+                        "NIP": str(r.nip).strip(),
+                        "Tanggal Efektif": pd.to_datetime(eff_date).normalize(),
+                        "Status": "NONAKTIF" if not r.aktif else "DIHAPUS",
+                        "Keterangan": "Status nonaktif / mutasi dari Database PostgreSQL",
+                    })
+                return pd.DataFrame(records)
+    except Exception:
+        pass
+
+    # 2. Fallback baca dari file CSV
+    source_path = Path(path)
     if not source_path.exists():
         return pd.DataFrame(columns=columns)
     result = pd.read_csv(source_path, dtype={"nip": "string"})

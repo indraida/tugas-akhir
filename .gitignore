@@ -4,4 +4,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+postgres_data/
+pgdata/
 
+.agents/rules/antigravity-rtk-rules.md

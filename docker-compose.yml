@@ -5,13 +5,16 @@ services:
     container_name: postgres_db
     restart: always
     environment:
-      POSTGRES_USER: myuser
-      POSTGRES_PASSWORD: mysecretpassword
-      POSTGRES_DB: mydb
+      POSTGRES_USER: ${POSTGRES_USER:-myuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mysecretpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-mydb}
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./postgres_data:/var/lib/postgresql/data/pgdata
+    networks:
+      - app-network
 
   # Layanan Aplikasi Streamlit
   web:
@@ -19,15 +22,18 @@ services:
     container_name: streamlit_app
     restart: always
     ports:
-      - "8501:8501"
+      - "${WEB_PORT:-8501}:8501"
     environment:
-      # URL Koneksi untuk SQLAlchemy/Psycopg2
-      - DATABASE_URL=postgresql://myuser:mysecretpassword@db:5432/mydb
+      - DATABASE_URL=${DATABASE_URL:-postgresql://myuser:mysecretpassword@db:5432/mydb}
+      - DATA_SOURCE=${DATA_SOURCE:-postgres}
     volumes:
       - .:/app
+    networks:
+      - app-network
     depends_on:
       - db
 
-volumes:
-  postgres_data:
+networks:
+  app-network:
+    driver: bridge
 

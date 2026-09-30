@@ -12,13 +12,13 @@ from sqlalchemy import (
 )
 from sqlalchemy.engine import Engine
 
-LOGGER = logging.getLogger(__name__)
+from database.schema import metadata
 
-opd_metadata = MetaData()
+LOGGER = logging.getLogger(__name__)
 
 opd_table = Table(
     "opd",
-    opd_metadata,
+    metadata,
     Column("id", BigInteger, primary_key=True, autoincrement=True),
     Column("kode", String(50), nullable=True, unique=True),
     Column("kode_sipd", String(50), nullable=True),
@@ -144,12 +144,82 @@ DEFAULT_SEEDED_OPDS = [
         "kepala_nip": "198309142008011009",
         "aktif": True,
     },
+    {
+        "kode": "1.07.01",
+        "kode_sipd": "1.07.01.01",
+        "nama": "Badan Perencanaan Pembangunan Daerah",
+        "singkatan": "BAPPEDA",
+        "jenis": "BADAN",
+        "alamat": "Jl. Perencanaan No. 12",
+        "telepon": "(021) 555-0107",
+        "email": "bappeda@pemda.go.id",
+        "website": "https://bappeda.pemda.go.id",
+        "kepala_nama": "Dr. Ir. Wahyu Hidayat, M.Si",
+        "kepala_nip": "197406181999031003",
+        "aktif": True,
+    },
+    {
+        "kode": "1.08.01",
+        "kode_sipd": "1.08.01.01",
+        "nama": "Badan Keuangan dan Aset Daerah",
+        "singkatan": "BKAD",
+        "jenis": "BADAN",
+        "alamat": "Jl. Keuangan No. 5",
+        "telepon": "(021) 555-0108",
+        "email": "bkad@pemda.go.id",
+        "website": "https://bkad.pemda.go.id",
+        "kepala_nama": "Dra. Sri Wahyuni, M.Ak",
+        "kepala_nip": "197602102001122001",
+        "aktif": True,
+    },
+    {
+        "kode": "1.09.01",
+        "kode_sipd": "1.09.01.01",
+        "nama": "Badan Kepegawaian Daerah",
+        "singkatan": "BKD",
+        "jenis": "BADAN",
+        "alamat": "Jl. Pegawai No. 2",
+        "telepon": "(021) 555-0109",
+        "email": "bkd@pemda.go.id",
+        "website": "https://bkd.pemda.go.id",
+        "kepala_nama": "H. Mulyadi, S.Sos., M.Si",
+        "kepala_nip": "197311251997031002",
+        "aktif": True,
+    },
+    {
+        "kode": "1.10.01",
+        "kode_sipd": "1.10.01.01",
+        "nama": "Biro Hukum",
+        "singkatan": "ROHUKUM",
+        "jenis": "BIRO",
+        "alamat": "Jl. Pahlawan No. 1 Gedung B",
+        "telepon": "(021) 555-0110",
+        "email": "hukum@pemda.go.id",
+        "website": "https://jdih.pemda.go.id",
+        "kepala_nama": "Agus Salim, S.H., M.H",
+        "kepala_nip": "198104152005011007",
+        "aktif": True,
+    },
+    {
+        "kode": "1.11.01",
+        "kode_sipd": "1.11.01.01",
+        "nama": "Biro Organisasi",
+        "singkatan": "ROORGANISASI",
+        "jenis": "BIRO",
+        "alamat": "Jl. Pahlawan No. 1 Gedung C",
+        "telepon": "(021) 555-0111",
+        "email": "organisasi@pemda.go.id",
+        "website": "https://organisasi.pemda.go.id",
+        "kepala_nama": "Dra. Ratna Juwita, M.Si",
+        "kepala_nip": "197908082003122004",
+        "aktif": True,
+    },
 ]
 
 
 def init_opd_schema(engine: Engine) -> None:
     """Buat tabel opd jika belum ada."""
-    opd_metadata.create_all(engine)
+    metadata.create_all(engine)
 
 
 def seed_default_opds(engine: Engine) -> list[str]:
