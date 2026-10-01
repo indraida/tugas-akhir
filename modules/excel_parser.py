@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import logging
 import re
+from io import BytesIO
 from pathlib import Path
+from typing import BinaryIO
 
 import pandas as pd
 
@@ -136,10 +138,9 @@ def _parse_sel_presensi(value: object) -> dict[str, object]:
     }
 
 
-def parse_file_presensi(file_path: str | Path) -> pd.DataFrame:
-    """Parse satu laporan BKD ke long format, tanpa menulis ke file sumber."""
-    path = Path(file_path)
-    raw = pd.read_excel(path, sheet_name="Rekap Bulanan", header=None, dtype=str)
+def _parse_raw_presensi(raw: pd.DataFrame, source_name: str) -> pd.DataFrame:
+    """Terapkan parser laporan yang sama pada DataFrame hasil baca Excel."""
+    path = Path(source_name)
     tahun, bulan, nama_bulan = _periode_dari_laporan(raw)
     unit_kerja = _unit_kerja_dari_laporan(raw)
     opd = unit_kerja if unit_kerja != "-" else _opd_dari_nama_file(path)
@@ -201,6 +202,28 @@ def parse_file_presensi(file_path: str | Path) -> pd.DataFrame:
     if not records:
         raise ValueError(f"Tidak ada data pegawai valid dalam {path.name}")
     return pd.DataFrame.from_records(records, columns=KONTRAK_LONG)
+
+
+def parse_file_presensi(file_path: str | Path) -> pd.DataFrame:
+    """Parse satu laporan BKD ke long format, tanpa menulis ke file sumber."""
+    path = Path(file_path)
+    raw = pd.read_excel(path, sheet_name="Rekap Bulanan", header=None, dtype=str)
+    return _parse_raw_presensi(raw, path.name)
+
+
+def read_attendance_excel(file_or_bytes: BinaryIO | bytes, filename: str) -> pd.DataFrame:
+    """Baca upload XLSX dengan parser/standardisasi laporan BKD existing.
+
+    Nama file hanya dipakai sebagai metadata/fallback OPD; periode selalu dibaca
+    dari isi laporan dan tanggal hasil parsing.
+    """
+    if not str(filename).lower().endswith(".xlsx"):
+        raise ValueError("Format file tidak didukung. Gunakan file .xlsx.")
+    payload = BytesIO(file_or_bytes) if isinstance(file_or_bytes, bytes) else file_or_bytes
+    if hasattr(payload, "seek"):
+        payload.seek(0)
+    raw = pd.read_excel(payload, sheet_name="Rekap Bulanan", header=None, dtype=str)
+    return _parse_raw_presensi(raw, Path(filename).name)
 
 
 def load_semua_presensi(data_dir: str | Path = "data") -> pd.DataFrame:

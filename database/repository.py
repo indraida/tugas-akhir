@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, time
-from typing import Any
+from typing import Any, Iterable
 
 import pandas as pd
 from sqlalchemy import (
@@ -143,18 +143,46 @@ def save_daily_attendance_to_db(frame: pd.DataFrame, engine: Engine) -> dict[str
                 presensi_harian.c.tanggal.in_({key[1] for key in keys}),
             )
         ).tuples())
-        statement = insert(presensi_harian).values(records)
-        update_columns = {
-            name: getattr(statement.excluded, name)
-            for name in ["nama_pegawai", "opd", "jam_masuk", "jam_pulang", "status_presensi", "keterlambatan_menit", "periode_bulan", "periode_tahun", "sumber_file"]
-        }
-        update_columns["updated_at"] = func.now()
-        connection.execute(statement.on_conflict_do_update(
-            constraint="uq_presensi_nip_tanggal", set_=update_columns
-        ))
+        for offset in range(0, len(records), 1000):
+            statement = insert(presensi_harian).values(records[offset : offset + 1000])
+            update_columns = {
+                name: getattr(statement.excluded, name)
+                for name in ["nama_pegawai", "opd", "jam_masuk", "jam_pulang", "status_presensi", "keterlambatan_menit", "periode_bulan", "periode_tahun", "sumber_file"]
+            }
+            update_columns["updated_at"] = func.now()
+            connection.execute(statement.on_conflict_do_update(
+                constraint="uq_presensi_nip_tanggal", set_=update_columns
+            ))
     report["updated"] = sum(key in existing for key in keys)
     report["inserted"] = len(keys) - report["updated"]
     return report
+
+
+def find_existing_attendance_keys(engine: Engine, keys: Iterable[tuple[str, date]]) -> set[tuple[str, date]]:
+    """Cari business key NIP + tanggal yang sudah ada, tanpa mutasi database."""
+    normalized = {(str(nip).strip(), attendance_date) for nip, attendance_date in keys}
+    if not normalized:
+        return set()
+    nips = {key[0] for key in normalized}
+    dates = {key[1] for key in normalized}
+    with engine.connect() as connection:
+        rows = connection.execute(
+            select(presensi_harian.c.nip, presensi_harian.c.tanggal).where(
+                presensi_harian.c.nip.in_(nips), presensi_harian.c.tanggal.in_(dates)
+            )
+        ).tuples()
+        return {tuple(row) for row in rows if tuple(row) in normalized}
+
+
+def list_available_attendance_periods(engine: Engine) -> list[tuple[int, int]]:
+    """Daftar (tahun, bulan) aktual dari tabel sumber dashboard."""
+    with engine.connect() as connection:
+        rows = connection.execute(
+            select(presensi_harian.c.periode_tahun, presensi_harian.c.periode_bulan)
+            .distinct()
+            .order_by(presensi_harian.c.periode_tahun.desc(), presensi_harian.c.periode_bulan.desc())
+        ).all()
+    return [(int(row[0]), int(row[1])) for row in rows]
 
 
 def load_attendance_from_db(

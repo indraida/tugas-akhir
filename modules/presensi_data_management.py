@@ -27,6 +27,8 @@ from database.presensi import (
     list_presensi_data,
     save_presensi_dataframe_to_db,
 )
+from database.repository import list_available_attendance_periods, save_daily_attendance_to_db
+from modules.attendance_import import build_import_preview
 from services.activity_log import log_system_activity
 from services.data_source import load_daily_data
 
@@ -42,6 +44,148 @@ STATUS_BADGE_ICONS = {
     "DL": "🟠 Dinas Luar",
     "Libur": "⚪ Libur",
 }
+
+
+def _period_labels(periods: list[tuple[int, int]]) -> list[str]:
+    return [f"{MONTH_NAMES_ID.get(month, month)} {year}" for year, month in periods]
+
+
+def _format_count_id(value: int) -> str:
+    """Format bilangan bulat dengan pemisah ribuan Indonesia."""
+    return f"{int(value):,}".replace(",", ".")
+
+
+def _import_flash_message(payload: dict[str, int]) -> str:
+    parts = [
+        f"{_format_count_id(payload.get('validated', 0))} data divalidasi",
+        f"{_format_count_id(payload.get('processed', 0))} berhasil diproses",
+    ]
+    inserted = int(payload.get("inserted", 0))
+    updated = int(payload.get("updated", 0))
+    skipped = int(payload.get("skipped", 0))
+    failed = int(payload.get("failed", 0))
+    if inserted:
+        parts.append(f"{_format_count_id(inserted)} data baru")
+    if updated:
+        parts.append(f"{_format_count_id(updated)} diperbarui")
+    if skipped:
+        parts.append(f"{_format_count_id(skipped)} duplikat/invalid dilewati")
+    if failed:
+        parts.append(f"{_format_count_id(failed)} gagal")
+    return "Import data presensi berhasil — " + " • ".join(parts)
+
+
+def render_attendance_import(engine: Engine, current_username: str) -> None:
+    """UI upload -> preview -> validasi -> explicit transactional UPSERT."""
+    flash = st.session_state.pop("attendance_import_flash", None)
+    if flash:
+        st.toast(_import_flash_message(flash), icon="✅")
+
+    uploader_version = int(st.session_state.get("attendance_import_version", 0))
+    st.markdown("#### Import Data Presensi")
+    st.caption("Unggah laporan rekap presensi BKD. Data hanya disimpan setelah tombol import ditekan.")
+    uploads = st.file_uploader(
+        "Upload file presensi Excel",
+        type=["xlsx"],
+        accept_multiple_files=True,
+        key=f"attendance_excel_uploads_{uploader_version}",
+    )
+    preview = None
+    if uploads:
+        try:
+            preview = build_import_preview(uploads, engine)
+        except (ValueError, KeyError, OSError) as exc:
+            message = str(exc)
+            if "data pegawai valid" in message.lower():
+                message = "Kolom wajib NIP tidak ditemukan atau tidak berisi NIP yang valid."
+            st.error(f"File belum dapat diimport: {message}")
+        except Exception:
+            LOGGER.exception("Gagal membaca upload presensi")
+            st.error("File belum dapat dibaca. Pastikan file .xlsx memakai format laporan presensi yang benar.")
+
+    if preview is not None:
+        dates = pd.to_datetime(preview.data["Tanggal"], errors="coerce")
+        period_labels = _period_labels(preview.periods)
+        period_text = ", ".join(period_labels) or "-"
+        if len(period_labels) > 1:
+            st.warning(f"File berisi beberapa periode: {period_text}")
+        st.markdown("**File terpilih:** " + ", ".join(preview.files))
+        st.markdown(f"**Periode terdeteksi:** {period_text}")
+        info_cols = st.columns(4)
+        info_cols[0].metric("Total Baris", f"{len(preview.data):,}")
+        info_cols[1].metric("Pegawai Unik", f"{preview.data['NIP'].nunique():,}")
+        info_cols[2].metric("Data Valid", f"{len(preview.valid_data):,}")
+        info_cols[3].metric("Perlu Diperiksa", f"{len(preview.invalid_data):,}")
+        st.caption(
+            f"Tanggal: {dates.min().strftime('%d %B %Y') if dates.notna().any() else '-'} s.d. "
+            f"{dates.max().strftime('%d %B %Y') if dates.notna().any() else '-'} • "
+            f"OPD: {', '.join(sorted(preview.data['Unit Kerja'].dropna().astype(str).unique()))}"
+        )
+
+        st.markdown("##### Preview Data")
+        preview_columns = ["NIP", "Nama", "Unit Kerja", "Tanggal", "Jam_Masuk", "Jam_Pulang", "Status", "Menit_Terlambat", "Sumber_File"]
+        st.dataframe(preview.data[preview_columns].head(50), hide_index=True, use_container_width=True)
+        st.markdown("##### Validasi")
+        st.success("✓ Struktur file, NIP, tanggal, status, OPD, dan keterlambatan telah diperiksa.")
+        st.write(f"Duplikat dalam file: **{preview.duplicate_count:,}**")
+        st.write(f"Data existing yang akan diperbarui: **{preview.existing_count:,}**")
+        st.write(f"Data baru: **{max(0, len(preview.valid_data) - preview.existing_count):,}**")
+        if not preview.invalid_data.empty:
+            st.markdown("##### Data Perlu Diperiksa")
+            invalid_columns = [column for column in preview_columns + ["Alasan"] if column in preview.invalid_data]
+            st.dataframe(preview.invalid_data[invalid_columns].head(50), hide_index=True, use_container_width=True)
+
+        confirmed = st.checkbox(
+            "Saya sudah memeriksa preview data",
+            key=f"attendance_import_confirmed_{uploader_version}",
+        )
+        import_clicked = st.button(
+            "Import ke Database",
+            type="primary",
+            disabled=not confirmed or preview.valid_data.empty,
+            key=f"attendance_import_submit_{uploader_version}",
+        )
+        if import_clicked:
+            with st.spinner("Mengimpor data presensi ke PostgreSQL..."):
+                try:
+                    result = save_daily_attendance_to_db(preview.valid_data, engine)
+                    relational_result = save_presensi_dataframe_to_db(preview.valid_data, engine)
+                    try:
+                        log_system_activity(
+                            "IMPORT_DATA_PRESENSI", "Import Data Presensi",
+                            f"User '{current_username}' mengimpor {result['valid']} record presensi.",
+                            metadata={
+                                "files": preview.files,
+                                "periods": period_labels,
+                                "presensi_harian": result,
+                                "presensi_relational": relational_result,
+                            },
+                            module="presensi",
+                        )
+                    except Exception:
+                        LOGGER.exception("Audit trail import presensi gagal ditulis")
+                    st.session_state["attendance_import_flash"] = {
+                        "validated": len(preview.data),
+                        "processed": int(result["valid"]),
+                        "inserted": int(result["inserted"]),
+                        "updated": int(result["updated"]),
+                        "skipped": len(preview.invalid_data),
+                        "failed": int(result["rejected"]),
+                    }
+                    st.session_state["attendance_import_version"] = uploader_version + 1
+                    st.rerun()
+                except Exception:
+                    LOGGER.exception("Import data presensi gagal")
+                    st.error("Import belum berhasil. Periksa format file atau koneksi database.")
+
+    st.markdown("##### Periode Data Tersedia")
+    try:
+        available = _period_labels(list_available_attendance_periods(engine))
+        st.write(", ".join(available) if available else "Belum ada periode presensi di database.")
+    except Exception:
+        LOGGER.exception("Gagal memuat periode presensi aktual")
+        st.warning("Periode data tersedia belum dapat dimuat.")
+    st.divider()
 
 
 def render_presensi_kpis(df: pd.DataFrame) -> None:
@@ -90,6 +234,8 @@ def show_presensi_data_page(engine: Engine) -> None:
 
     current_role = st.session_state.get("user_role", "admin").lower()
     current_username = st.session_state.get("username", "")
+
+    render_attendance_import(engine, current_username)
 
     try:
         periode_list = list_periode(engine)
