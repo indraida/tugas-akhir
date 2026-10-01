@@ -45,13 +45,15 @@ def test_report_contract_accepts_all_periods_opd_and_employee_types(period, empl
     assert report["months"] == list(range(1, 13))
 
 
-def test_report_model_excludes_zero_tk_and_uses_dynamic_title_period():
+def test_report_model_keeps_zero_tk_opd_and_uses_dynamic_title_period():
     report = prepare_tk_report_data(sample_data(), "PNS")
     assert report["employee_type"] == "PNS"
     assert "DAFTAR NAMA PNS" in report["title"]
     assert report["period_text"] == "PERIODE JANUARI 2026 s.d. DESEMBER 2026"
-    assert [opd["opd_name"] for opd in report["opds"]] == ["BKAD", "BKD"]
-    assert all(opd["total_tk"] > 0 and opd["employees"] for opd in report["opds"])
+    assert [opd["opd_name"] for opd in report["opds"]] == ["BKAD", "BKD", "Dinkes"]
+    dinkes = next(opd for opd in report["opds"] if opd["opd_name"] == "Dinkes")
+    assert dinkes["total_tk"] == 0
+    assert dinkes["employees"] == []
     assert report["grand_total"] == 8
     assert all(employee["total_tk"] > 0 for opd in report["opds"] for employee in opd["employees"])
 

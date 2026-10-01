@@ -91,6 +91,7 @@ def prepare_tk_report_data(
     scoped["TK"] = pd.to_numeric(scoped["TK"], errors="coerce").fillna(0).astype(int)
     scoped["Tahun"] = pd.to_numeric(scoped["Tahun"], errors="coerce")
     years = sorted(scoped["Tahun"].dropna().astype(int).unique().tolist())
+    report_opd_names = sorted(scoped["Unit Kerja"].dropna().astype(str).unique().tolist())
     selected_month_numbers = get_report_period_months(period_type)
     selected_month_names = [MONTHS[number - 1] for number in selected_month_numbers]
     scoped = scoped[scoped["Bulan"].astype(str).isin(selected_month_names)].copy()
@@ -114,9 +115,9 @@ def prepare_tk_report_data(
         "opds": [],
         "grand_total": 0,
     }
-    # Nama OPD berasal dari hasil positif pada periode aktif, sehingga unit dan
-    # pegawai tanpa TK tidak pernah masuk preview maupun berkas ekspor.
-    for opd_name in sorted(grouped["Unit Kerja"].dropna().astype(str).unique().tolist()):
+    # Seluruh OPD dalam scope laporan tetap ditampilkan, termasuk yang tidak
+    # memiliki pegawai dengan TK pada periode aktif.
+    for opd_name in report_opd_names:
         opd_rows = grouped[grouped["Unit Kerja"].astype(str) == opd_name]
         employees = []
         for nip, employee_rows in opd_rows.groupby("NIP", sort=True):
@@ -130,8 +131,6 @@ def prepare_tk_report_data(
                 "months": months, "monthly_tk": months, "total_tk": total, "keterangan": "",
             })
         opd_total = sum(item["total_tk"] for item in employees)
-        if not employees or opd_total <= 0:
-            continue
         report["opds"].append({"opd": str(opd_name), "opd_name": str(opd_name), "employees": employees, "total_tk": opd_total})
         report["grand_total"] += opd_total
     report["total_opd"] = len(report["opds"])

@@ -31,6 +31,12 @@ def test_active_ews_and_detail_do_not_expose_legacy_risk_score():
     assert not app.exception
 
     _navigate(app, "Detail Pegawai")
+    opd = next(item for item in app.selectbox if item.label == "OPD")
+    opd.select(opd.options[0]).run()
+    employee = next(item for item in app.selectbox if item.label == "Pegawai")
+    employee.select(employee.options[0]).run()
+    period = next(item for item in app.selectbox if item.label == "Periode")
+    period.select(period.options[0]).run()
     detail_html = " ".join(str(item.value) for item in app.markdown)
     assert "Dasar Early Warning" in detail_html
     assert "Risk Score" not in detail_html

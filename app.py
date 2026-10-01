@@ -654,11 +654,32 @@ def inject_dashboard_css() -> None:
             .sidebar-brand .brand-name { font-size:1.02rem; font-weight:800; letter-spacing:.08em; line-height:1.1; }
             .sidebar-brand .brand-subtitle { color:#94a3b8 !important; font-size:.68rem; margin-top:.2rem; }
             .sidebar-nav-title, [data-testid="stSidebar"] .sidebar-filter-title { color:#94a3b8 !important; text-transform:uppercase; letter-spacing:.1em; font-size:.68rem; font-weight:700; margin:.25rem 0 .35rem; }
-            [data-testid="stSidebar"] div[role="radiogroup"] { gap:.18rem; }
-            [data-testid="stSidebar"] div[role="radiogroup"] label { border-radius:9px; padding:.48rem .6rem; margin:0; transition:background .15s ease; }
-            [data-testid="stSidebar"] div[role="radiogroup"] label:hover { background:#173b5e; }
-            [data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) { background:#2563eb; box-shadow:0 4px 12px rgba(37,99,235,.22); }
-            [data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child { display:none; }
+            [data-testid="stSidebar"] [data-testid="stRadioGroup"] { gap:2px; width:100%; align-items:flex-start; }
+            [data-testid="stSidebar"] [data-testid="stRadioOption"] {
+                display:flex; align-items:center; gap:0 !important; width:max-content; max-width:100%; min-height:30px;
+                box-sizing:border-box; border-radius:8px; padding:6px 10px; margin:0;
+                background:transparent; color:#f8fafc !important;
+                transition:background .15s ease, box-shadow .15s ease;
+            }
+            [data-testid="stSidebar"] [data-testid="stRadioOption"]:hover {
+                background:rgba(255,255,255,.08);
+            }
+            [data-testid="stSidebar"] [data-testid="stRadioOption"][data-selected="true"] {
+                background:#2563eb; box-shadow:0 3px 10px rgba(37,99,235,.28); font-weight:600;
+            }
+            [data-testid="stSidebar"] [data-testid="stRadioOption"][data-selected="true"] * { color:#ffffff !important; }
+            [data-testid="stSidebar"] [data-testid="stRadioOption"]:focus-within {
+                outline:2px solid #93c5fd; outline-offset:2px;
+            }
+            [data-testid="stSidebar"] [data-testid="stRadioOption"] > div > div:first-child {
+                display:none !important; width:0 !important; min-width:0 !important;
+                height:0 !important; margin:0 !important; padding:0 !important;
+            }
+            [data-testid="stSidebar"] [data-testid="stRadioOption"] > div {
+                display:flex; align-items:center; min-width:0; margin:0 !important; line-height:1.2; white-space:normal;
+                gap:0 !important; font-size:.78rem;
+            }
+            [data-testid="stSidebar"] [data-testid="stRadioOption"] p { margin:0 !important; }
             [data-testid="stSidebar"] .stSelectbox, [data-testid="stSidebar"] .stTextInput { margin-bottom:.35rem; }
             [data-testid="stSidebar"] .stSelectbox label, [data-testid="stSidebar"] .stTextInput label { color:#cbd5e1 !important; font-size:.75rem; }
             [data-testid="stSidebar"] .stButton button { background:#2563eb; border:0; border-radius:8px; font-weight:700; }
@@ -2629,38 +2650,66 @@ def show_employee_detail_page() -> None:
         return
 
     filter_opd, filter_employee, filter_period = st.columns([1, 2, 1])
-    units = ["Semua OPD"] + sorted(data["Unit Kerja"].dropna().astype(str).unique().tolist())
+    units = sorted(data["Unit Kerja"].dropna().astype(str).unique().tolist())
     with filter_opd:
-        selected_unit = st.selectbox("OPD", units, key="employee_detail_opd")
-    employee_source = data if selected_unit == "Semua OPD" else data[data["Unit Kerja"] == selected_unit]
+        selected_unit = st.selectbox(
+            "OPD", units, index=None, placeholder="Pilih OPD",
+            key="employee_detail_opd",
+        )
+    if "_employee_detail_previous_opd" not in st.session_state:
+        st.session_state["_employee_detail_previous_opd"] = selected_unit
+    elif st.session_state["_employee_detail_previous_opd"] != selected_unit:
+        st.session_state["_employee_detail_previous_opd"] = selected_unit
+        st.session_state.pop("employee_detail_employee", None)
+        st.session_state.pop("employee_detail_period", None)
+        st.session_state.pop("_employee_detail_previous_employee", None)
+        st.rerun()
+
+    employee_source = data[data["Unit Kerja"] == selected_unit] if selected_unit is not None else data.iloc[0:0]
     employees = employee_source.drop_duplicates("NIP").sort_values("Nama Pegawai")
-    if employees.empty:
-        st.info("Tidak terdapat data pegawai pada filter yang dipilih.")
-        return
     options = {f"{row['Nama Pegawai']} — {row['NIP']}": row["NIP"] for _, row in employees.iterrows()}
     with filter_employee:
-        selected_label = st.selectbox("Pegawai", list(options), key="employee_detail_employee")
-    selected_nip = options[selected_label]
-    history = data[data["NIP"] == selected_nip].copy()
-    history["_tahun"] = pd.to_numeric(history["Tahun"], errors="coerce").astype("Int64")
+        selected_label = st.selectbox(
+            "Pegawai", list(options), index=None,
+            placeholder="Pilih Pegawai" if selected_unit is not None else "Pilih OPD terlebih dahulu",
+            disabled=selected_unit is None,
+            key="employee_detail_employee",
+        )
+    if "_employee_detail_previous_employee" not in st.session_state:
+        st.session_state["_employee_detail_previous_employee"] = selected_label
+    elif st.session_state["_employee_detail_previous_employee"] != selected_label:
+        st.session_state["_employee_detail_previous_employee"] = selected_label
+        st.session_state.pop("employee_detail_period", None)
+        st.rerun()
+
+    selected_nip = options.get(selected_label)
+    history = data[data["NIP"] == selected_nip].copy() if selected_nip is not None else data.iloc[0:0].copy()
     month_rank = {month: index for index, month in enumerate(ANALYTICS_MONTHS, start=1)}
-    period_pairs = (
-        history.loc[history["_tahun"].notna(), ["_tahun", "Bulan"]]
-        .drop_duplicates()
-        .assign(_bulan=lambda frame: frame["Bulan"].map(month_rank))
-        .sort_values(["_tahun", "_bulan"])
-    )
-    period_options = [f"{row['Bulan']} {int(row['_tahun'])}" for _, row in period_pairs.iterrows()]
-    period_scope = {
-        f"{row['Bulan']} {int(row['_tahun'])}": (int(row['_tahun']), str(row["Bulan"]))
-        for _, row in period_pairs.iterrows()
-    }
-    previous_period_value = st.session_state.get("employee_detail_period")
-    if previous_period_value not in period_options:
-        matching_periods = [option for option in period_options if option.startswith(f"{previous_period_value} ")]
-        st.session_state["employee_detail_period"] = matching_periods[-1] if matching_periods else period_options[-1]
+    period_options: list[str] = []
+    period_scope: dict[str, tuple[int, str]] = {}
+    if selected_nip is not None:
+        history["_tahun"] = pd.to_numeric(history["Tahun"], errors="coerce").astype("Int64")
+        period_pairs = (
+            history.loc[history["_tahun"].notna(), ["_tahun", "Bulan"]]
+            .drop_duplicates()
+            .assign(_bulan=lambda frame: frame["Bulan"].map(month_rank))
+            .sort_values(["_tahun", "_bulan"])
+        )
+        period_options = [f"{row['Bulan']} {int(row['_tahun'])}" for _, row in period_pairs.iterrows()]
+        period_scope = {
+            f"{row['Bulan']} {int(row['_tahun'])}": (int(row['_tahun']), str(row["Bulan"]))
+            for _, row in period_pairs.iterrows()
+        }
     with filter_period:
-        selected_period = st.selectbox("Periode", period_options, key="employee_detail_period")
+        selected_period = st.selectbox(
+            "Periode", period_options, index=None, placeholder="Pilih Periode",
+            disabled=selected_nip is None,
+            key="employee_detail_period",
+        )
+
+    if selected_unit is None or selected_nip is None or selected_period is None:
+        st.info("Pilih OPD, pegawai, dan periode untuk menampilkan detail presensi.")
+        return
 
     selected_year, selected_month = period_scope[selected_period]
     history["Bulan"] = pd.Categorical(history["Bulan"], categories=months, ordered=True)
@@ -5837,15 +5886,8 @@ def show_tk_report_page() -> None:
     month_names = [MONTH_NAMES[f"{month:02d}"] for month in report_data["active_months"]]
     range_short = f"{month_names[0][:3]}–{month_names[-1][:3]} {chosen_year}"
     period_meta = f"{report_data['period_name']} • {range_short}"
-    st.markdown("<div class='report-section-title'>Ringkasan Laporan</div>" +
-        "<div class='report-summary-grid'>" + "".join(
-            f"<div class='report-summary-card'><div class='report-summary-value'>{value:,}</div><div class='report-summary-label'>{label}</div></div>".replace(",", ".")
-            for value, label in [(report_data["grand_total_tk"], "Hari TK"), (report_data["total_employees"], "Pegawai"), (report_data["total_opd"], "OPD")]
-        ) + f"</div><div class='report-meta'>{escape(period_meta)} • {report_data['total_opd']} OPD • {report_data['total_employees']} Pegawai • {report_data['grand_total_tk']} Hari TK</div>", unsafe_allow_html=True)
-
     if report_data["grand_total_tk"] <= 0:
         st.success("✓ Tidak terdapat data ketidakhadiran TK pada parameter laporan yang dipilih.\n\nCoba pilih periode atau OPD lainnya.")
-        return
 
     st.markdown("<div class='report-section-title'>Preview Laporan</div>", unsafe_allow_html=True)
     preview_limit, shown = 25, 0
@@ -5854,9 +5896,7 @@ def show_tk_report_page() -> None:
     rows = []
     for opd_index, opd_item in enumerate(report_data["opds"], 1):
         available = preview_limit - shown
-        if available <= 0: break
-        selected_employees = opd_item["employees"][:available]
-        if not selected_employees: continue
+        selected_employees = opd_item["employees"][:max(available, 0)]
         colspan = 6 + len(all_report_months)
         rows.append(f"<tr class='opd-row'><td>{opd_index}</td><td colspan='{colspan - 1}'>{escape(opd_item['opd_name'].upper())} • TOTAL TK {opd_item['total_tk']}</td></tr>")
         for number, employee in enumerate(selected_employees, 1):
@@ -5954,6 +5994,8 @@ if not st.session_state.is_logged_in:
     show_login_page()
     st.stop()
 
+inject_dashboard_css()
+
 navigation_target = st.session_state.pop("navigate_to_page", None)
 if navigation_target:
     st.session_state["page_navigation"] = navigation_target
@@ -5964,6 +6006,19 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     st.markdown("<div class='sidebar-nav-title'>Menu Utama</div>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"] [data-testid="stRadioOption"] > div > div:first-child {
+            display: none !important;
+        }
+        [data-testid="stSidebar"] [data-testid="stRadioOption"] > div {
+            gap: 0 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     page_options = {
         "🏠 Executive Dashboard": "Executive Dashboard",
         "🚨 Early Warning System": "Early Warning System",

@@ -16,7 +16,7 @@ def test_dedicated_tk_report_page_has_filters_preview_and_downloads():
     html = " ".join(str(item.value) for item in app.markdown)
     assert "Laporan Ketidakhadiran" in html
     assert "Parameter Laporan" in html
-    assert "Ringkasan Laporan" in html
+    assert "Ringkasan Laporan" not in html
     assert "Preview Laporan" in html
     assert "Siap Mengunduh Laporan" in html
     assert "Lampiran Surat Sekretaris Daerah Provinsi Kalimantan Barat" in html
