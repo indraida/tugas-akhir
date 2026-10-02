@@ -26,6 +26,7 @@ from database.pegawai import (
     update_pegawai,
 )
 from services.activity_log import log_system_activity
+from services.rbac import EDIT_MASTER, can_access_page, has_permission
 
 LOGGER = logging.getLogger(__name__)
 
@@ -54,6 +55,9 @@ def render_pegawai_kpis(all_pegawai: list[dict[str, Any]]) -> None:
 
 def show_pegawai_management_page(engine: Engine) -> None:
     """Tampilan utama modul Master Data Pegawai."""
+    if not can_access_page(st.session_state.get("user_role"), "Master Pegawai"):
+        st.error("Akses tidak tersedia untuk peran pengguna Anda.")
+        return
     st.markdown(
         """
         <div style="margin-bottom: 1.2rem;">
@@ -68,7 +72,7 @@ def show_pegawai_management_page(engine: Engine) -> None:
         unsafe_allow_html=True,
     )
 
-    current_role = st.session_state.get("user_role", "admin").lower()
+    current_role = st.session_state.get("user_role")
     current_username = st.session_state.get("username", "")
 
     try:
@@ -81,6 +85,19 @@ def show_pegawai_management_page(engine: Engine) -> None:
 
     render_pegawai_kpis(all_pegawai_with_trash)
     st.markdown("---")
+
+    if not has_permission(current_role, EDIT_MASTER):
+        st.info("Mode Operator: Master Data Pegawai ditampilkan read-only.")
+        rows = [{
+            "NIP": pegawai.get("nip") or "-",
+            "Nama Pegawai": pegawai.get("nama_pegawai") or "-",
+            "OPD": pegawai.get("nama_opd") or "-",
+            "Jabatan": pegawai.get("jabatan") or "-",
+            "Status Pegawai": pegawai.get("status_pegawai") or "-",
+            "Status": "Aktif" if pegawai.get("aktif") else "Nonaktif",
+        } for pegawai in active_pegawai]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        return
 
     tab_list, tab_import, tab_add, tab_edit, tab_trash = st.tabs([
         "📋 Direktori & Data Pegawai",

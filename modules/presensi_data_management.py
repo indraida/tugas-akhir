@@ -31,6 +31,9 @@ from database.repository import list_available_attendance_periods, save_daily_at
 from modules.attendance_import import build_import_preview
 from services.activity_log import log_system_activity
 from services.data_source import load_daily_data
+from services.rbac import (
+    EDIT_MASTER, IMPORT_ATTENDANCE, can_access_page, has_permission,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -77,6 +80,9 @@ def _import_flash_message(payload: dict[str, int]) -> str:
 
 def render_attendance_import(engine: Engine, current_username: str) -> None:
     """UI upload -> preview -> validasi -> explicit transactional UPSERT."""
+    if not has_permission(st.session_state.get("user_role"), IMPORT_ATTENDANCE):
+        st.error("Aksi tidak tersedia untuk peran pengguna Anda.")
+        return
     flash = st.session_state.pop("attendance_import_flash", None)
     if flash:
         st.toast(_import_flash_message(flash), icon="✅")
@@ -218,6 +224,9 @@ def render_presensi_kpis(df: pd.DataFrame) -> None:
 
 def show_presensi_data_page(engine: Engine) -> None:
     """Tampilan utama modul Data Presensi & Periode."""
+    if not can_access_page(st.session_state.get("user_role"), "Data Presensi"):
+        st.error("Akses tidak tersedia untuk peran pengguna Anda.")
+        return
     st.markdown(
         """
         <div style="margin-bottom: 1.2rem;">
@@ -232,7 +241,7 @@ def show_presensi_data_page(engine: Engine) -> None:
         unsafe_allow_html=True,
     )
 
-    current_role = st.session_state.get("user_role", "admin").lower()
+    current_role = st.session_state.get("user_role")
     current_username = st.session_state.get("username", "")
 
     render_attendance_import(engine, current_username)
@@ -243,6 +252,25 @@ def show_presensi_data_page(engine: Engine) -> None:
         pegawai_list = list_pegawai(engine, aktif_only=True)
     except Exception as exc:
         st.error(f"❌ Gagal memuat referensi dari database PostgreSQL: {exc}")
+        return
+
+    if not has_permission(current_role, EDIT_MASTER):
+        st.info("Mode Operator: master periode dan entri manual bersifat read-only. Import presensi tetap tersedia.")
+        df_presensi = list_presensi_data(engine, limit=2000)
+        render_presensi_kpis(df_presensi)
+        if df_presensi.empty:
+            st.info("Belum ada data presensi di database.")
+        else:
+            readonly_columns = [
+                "nip", "nama_pegawai", "nama_opd", "tanggal_presensi",
+                "jam_masuk", "jam_pulang", "status_presensi",
+                "keterlambatan_menit", "sumber_data",
+            ]
+            st.dataframe(
+                df_presensi[[column for column in readonly_columns if column in df_presensi]],
+                hide_index=True,
+                use_container_width=True,
+            )
         return
 
     tab_data, tab_periode, tab_entri, tab_sync = st.tabs([

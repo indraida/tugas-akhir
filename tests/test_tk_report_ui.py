@@ -10,6 +10,7 @@ def test_dedicated_tk_report_page_has_filters_preview_and_downloads():
     app = AppTest.from_file("app.py", default_timeout=30)
     app.session_state["is_logged_in"] = True
     app.session_state["username"] = "test"
+    app.session_state["user_role"] = "ADMIN"
     app.run()
     next(item for item in app.radio if item.label == "Pilih halaman").set_value("📄 Laporan Ketidakhadiran").run()
 
@@ -17,13 +18,27 @@ def test_dedicated_tk_report_page_has_filters_preview_and_downloads():
     assert "Laporan Ketidakhadiran" in html
     assert "Parameter Laporan" in html
     assert "Ringkasan Laporan" not in html
+    assert "Preview Laporan" not in html
+    assert "Siap Mengunduh Laporan" not in html
+    assert "Pilih Tahun, OPD, Jenis Pegawai, dan Periode" in " ".join(str(item.value) for item in app.info)
+    report_filters = {"Tahun", "OPD", "Jenis Pegawai", "Periode"}
+    assert {item.label for item in app.selectbox if item.label in report_filters} == report_filters
+    assert all(next(item for item in app.selectbox if item.label == label).value is None for label in report_filters)
+    assert not app.get("download_button")
+
+    year_filter = next(item for item in app.selectbox if item.label == "Tahun")
+    year_filter.select(year_filter.options[0]).run()
+    next(item for item in app.selectbox if item.label == "OPD").select("Semua OPD")
+    next(item for item in app.selectbox if item.label == "Jenis Pegawai").select("Semua Jenis Pegawai")
+    next(item for item in app.selectbox if item.label == "Periode").select("TW I").run()
+
+    html = " ".join(str(item.value) for item in app.markdown)
     assert "Preview Laporan" in html
     assert "Siap Mengunduh Laporan" in html
     assert "Lampiran Surat Sekretaris Daerah Provinsi Kalimantan Barat" in html
     assert "<th colspan='3'>TRIWULAN I</th><th colspan='3'>TRIWULAN II</th><th colspan='3'>TRIWULAN III</th><th colspan='3'>TRIWULAN IV</th>" in html
     assert all(month in html for month in ["JAN", "FEB", "MAR", "APR", "MEI", "JUN", "JUL", "AGT", "SEP", "OKT", "NOV", "DES"])
-    assert 'st.segmented_control("Periode", list(period_codes)' in Path("app.py").read_text(encoding="utf-8")
-    assert {item.label for item in app.selectbox if item.label in {"Tahun", "OPD", "Jenis Pegawai"}} == {"Tahun", "OPD", "Jenis Pegawai"}
+    assert '"Periode", list(period_codes), index=None' in Path("app.py").read_text(encoding="utf-8")
     assert {item.label for item in app.get("download_button")} == {"⬇ Unduh Excel", "📄 Unduh PDF"}
     assert not app.exception
 

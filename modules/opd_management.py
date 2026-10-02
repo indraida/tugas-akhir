@@ -21,6 +21,7 @@ from database.opd import (
     update_opd,
 )
 from services.activity_log import log_system_activity
+from services.rbac import EDIT_MASTER, can_access_page, has_permission
 
 LOGGER = logging.getLogger(__name__)
 
@@ -57,6 +58,9 @@ def render_opd_kpis(all_opds: list[dict[str, Any]]) -> None:
 
 def show_opd_management_page(engine: Engine) -> None:
     """Tampilan utama modul Manajemen Master OPD / Dinas."""
+    if not can_access_page(st.session_state.get("user_role"), "Master OPD"):
+        st.error("Akses tidak tersedia untuk peran pengguna Anda.")
+        return
     st.markdown(
         """
         <div style="margin-bottom: 1.2rem;">
@@ -71,7 +75,7 @@ def show_opd_management_page(engine: Engine) -> None:
         unsafe_allow_html=True,
     )
 
-    current_role = st.session_state.get("user_role", "admin").lower()
+    current_role = st.session_state.get("user_role")
     current_username = st.session_state.get("username", "")
 
     try:
@@ -83,6 +87,18 @@ def show_opd_management_page(engine: Engine) -> None:
 
     render_opd_kpis(all_opds_with_trash)
     st.markdown("---")
+
+    if not has_permission(current_role, EDIT_MASTER):
+        rows = [{
+            "Kode": opd.get("kode") or "-",
+            "Nama OPD": opd.get("nama") or "-",
+            "Singkatan": opd.get("singkatan") or "-",
+            "Jenis": opd.get("jenis") or "-",
+            "Kepala OPD": opd.get("kepala_nama") or "-",
+            "Status": "Aktif" if opd.get("aktif") else "Nonaktif",
+        } for opd in active_opds]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        return
 
     tab_list, tab_add, tab_edit, tab_trash = st.tabs([
         "🏢 Direktori & Daftar OPD",

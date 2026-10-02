@@ -51,6 +51,10 @@ from modules.analytics import (
 from database.auth import authenticate_user, init_auth_schema, seed_default_users
 from database.connection import get_engine
 from services.data_source import active_source_name, load_daily_data as load_canonical_daily_data
+from services.rbac import (
+    UPDATE_ACTION_CENTER, VIEW_AUDIT, can_access_page, get_allowed_pages, has_permission,
+    normalize_role, require_permission,
+)
 from services.work_calendar import build_work_calendar, load_calendar_overrides, summarize_work_calendar_period
 from services.activity_log import APP_TIMEZONE, load_system_activities, log_system_activity
 from modules.attendance_compliance import calculate_monthly_attendance_compliance
@@ -92,13 +96,14 @@ def login(username: str, password: str) -> tuple[bool, str]:
             st.session_state.is_logged_in = True
             st.session_state.username = user_data["username"]
             st.session_state.user_fullname = user_data.get("nama_lengkap") or user_data["username"]
-            st.session_state.user_role = user_data.get("role", "admin")
+            st.session_state.user_role = normalize_role(user_data.get("role")) or "UNKNOWN"
             st.session_state.user_id = user_data.get("id")
+            st.session_state.pop("page_navigation", None)
             try:
                 log_system_activity(
                     "auth",
                     "User Login",
-                    f"Pengguna '{user_data['username']}' ({user_data.get('role', 'admin')}) berhasil login via PostgreSQL.",
+                    f"Pengguna '{user_data['username']}' ({user_data.get('role') or 'UNKNOWN'}) berhasil login via PostgreSQL.",
                     metadata={"username": user_data["username"], "role": user_data.get("role")},
                 )
             except Exception:
@@ -2314,40 +2319,49 @@ def show_opd_analysis_page() -> None:
         st.warning("Master Kalender Kerja untuk periode aktif belum tersedia atau belum valid.")
 
     st.markdown("<div class='opd-section-title'>Detail OPD Terpilih</div><div class='opd-section-note'>Komposisi dan pegawai menonjol pada satu OPD, tanpa grafik tren waktu.</div>", unsafe_allow_html=True)
-    selected_opd = st.selectbox("Pilih OPD", sorted(opd["Unit Kerja"].astype(str).tolist()), key="opd_detail_selected")
-    detail = opd[opd["Unit Kerja"].astype(str).eq(selected_opd)].iloc[0]
-    detail_kpis = [
-        ("Jumlah Pegawai", f"{int(detail['Pegawai'])} pegawai"),
-        ("Kepatuhan Presensi", format_percentage_exact(detail["Kepatuhan Presensi"])),
-        ("Kehadiran Fisik", f"{detail['Kehadiran Fisik']:.1f}%".replace(".", ",")),
-        ("TK", f"{int(detail['TK'])} hari"),
-        ("Keterlambatan", f"{int(detail['Terlambat'])} kali"),
-    ]
-    st.markdown(f"<div class='opd-detail-card'><strong style='color:#173b63'>{escape(selected_opd.title())}</strong><div style='display:flex;flex-wrap:wrap;gap:10px 24px;margin-top:10px;font-size:12px;color:#64748b'>" + "".join(f"<span>{label}: <strong style='color:#0f172a'>{value}</strong></span>" for label, value in detail_kpis) + "</div></div>", unsafe_allow_html=True)
+    selected_opd = st.selectbox(
+        "Pilih OPD",
+        sorted(opd["Unit Kerja"].astype(str).tolist()),
+        index=None,
+        placeholder="Pilih OPD",
+        key="opd_detail_selected",
+    )
+    if selected_opd is None:
+        st.caption("Pilih salah satu OPD untuk menampilkan detail dan komposisi presensi.")
+    else:
+        detail = opd[opd["Unit Kerja"].astype(str).eq(selected_opd)].iloc[0]
+        detail_kpis = [
+            ("Jumlah Pegawai", f"{int(detail['Pegawai'])} pegawai"),
+            ("Kepatuhan Presensi", format_percentage_exact(detail["Kepatuhan Presensi"])),
+            ("Kehadiran Fisik", f"{detail['Kehadiran Fisik']:.1f}%".replace(".", ",")),
+            ("TK", f"{int(detail['TK'])} hari"),
+            ("Keterlambatan", f"{int(detail['Terlambat'])} kali"),
+        ]
+        st.markdown(f"<div class='opd-detail-card'><strong style='color:#173b63'>{escape(selected_opd.title())}</strong><div style='display:flex;flex-wrap:wrap;gap:10px 24px;margin-top:10px;font-size:12px;color:#64748b'>" + "".join(f"<span>{label}: <strong style='color:#0f172a'>{value}</strong></span>" for label, value in detail_kpis) + "</div></div>", unsafe_allow_html=True)
 
-    detail_daily = indicators[indicators["Unit Kerja"].astype(str).eq(selected_opd)].copy()
-    composition_values = {
-        "Hadir": int(detail_daily["Hadir Fisik"].sum()), "Cuti": int(detail_daily["Cuti"].sum()),
-        "WFH": int(detail_daily["WFH"].sum()), "DL": int(detail_daily["DL"].sum()), "TK": int(detail_daily["TK"].sum()),
-    }
-    composition = pd.DataFrame({"Status": list(composition_values), "Jumlah": list(composition_values.values())})
-    composition_chart = alt.Chart(composition).mark_bar(cornerRadiusEnd=4, color="#2563eb").encode(
-        y=alt.Y("Status:N", sort=list(composition_values), title=None), x=alt.X("Jumlah:Q", title="Jumlah hari"),
-        tooltip=["Status:N", alt.Tooltip("Jumlah:Q", format=",", title="Hari")],
-    ).properties(height=190)
-    st.markdown("**Komposisi Presensi**")
-    st.altair_chart(composition_chart, use_container_width=True)
+        detail_daily = indicators[indicators["Unit Kerja"].astype(str).eq(selected_opd)].copy()
+        composition_values = {
+            "Hadir": int(detail_daily["Hadir Fisik"].sum()), "Cuti": int(detail_daily["Cuti"].sum()),
+            "WFH": int(detail_daily["WFH"].sum()), "DL": int(detail_daily["DL"].sum()), "TK": int(detail_daily["TK"].sum()),
+        }
+        composition = pd.DataFrame({"Status": list(composition_values), "Jumlah": list(composition_values.values())})
+        composition_chart = alt.Chart(composition).mark_bar(cornerRadiusEnd=4, color="#2563eb").encode(
+            y=alt.Y("Status:N", sort=list(composition_values), title=None), x=alt.X("Jumlah:Q", title="Jumlah hari"),
+            tooltip=["Status:N", alt.Tooltip("Jumlah:Q", format=",", title="Hari")],
+        ).properties(height=190)
+        st.markdown("**Komposisi Presensi**")
+        st.altair_chart(composition_chart, use_container_width=True)
 
-    employees = detail_daily.groupby(["NIP", "Nama"], as_index=False, dropna=False).agg(TK=("TK", "sum"), Terlambat=("Terlambat", "sum"))
-    employee_left, employee_right = st.columns(2)
-    with employee_left:
-        st.markdown("**Pegawai dengan TK Tertinggi**")
-        tk_employees = employees[employees["TK"] > 0].sort_values(["TK", "Nama"], ascending=[False, True]).head(5)
-        st.dataframe(tk_employees.rename(columns={"Nama": "Nama Pegawai"}), hide_index=True, use_container_width=True)
-    with employee_right:
-        st.markdown("**Pegawai Terlambat Terbanyak**")
-        late_employees = employees[employees["Terlambat"] > 0].sort_values(["Terlambat", "Nama"], ascending=[False, True]).head(5)
-        st.dataframe(late_employees.rename(columns={"Nama": "Nama Pegawai"}), hide_index=True, use_container_width=True)
+        employees = detail_daily.groupby(["NIP", "Nama"], as_index=False, dropna=False).agg(TK=("TK", "sum"), Terlambat=("Terlambat", "sum"))
+        employee_left, employee_right = st.columns(2)
+        with employee_left:
+            st.markdown("**Pegawai dengan TK Tertinggi**")
+            tk_employees = employees[employees["TK"] > 0].sort_values(["TK", "Nama"], ascending=[False, True]).head(5)
+            st.dataframe(tk_employees.rename(columns={"Nama": "Nama Pegawai"}), hide_index=True, use_container_width=True)
+        with employee_right:
+            st.markdown("**Pegawai Terlambat Terbanyak**")
+            late_employees = employees[employees["Terlambat"] > 0].sort_values(["Terlambat", "Nama"], ascending=[False, True]).head(5)
+            st.dataframe(late_employees.rename(columns={"Nama": "Nama Pegawai"}), hide_index=True, use_container_width=True)
 
 
 def show_employee_detail_page_legacy() -> None:
@@ -3415,7 +3429,7 @@ def _action_waiting_days(item: dict) -> int:
     return max((pd.Timestamp.now() - created).days, 0) if pd.notna(created) else 0
 
 
-def get_action_center_items(data: pd.DataFrame) -> list[dict]:
+def get_action_center_items(data: pd.DataFrame, *, persist: bool = True) -> list[dict]:
     """Konsumsi hasil EWS dan buat tepat satu kasus per NIP + tahun."""
     active_data = apply_employee_active_status(data)
     sources = []
@@ -3467,7 +3481,7 @@ def get_action_center_items(data: pd.DataFrame) -> list[dict]:
                 if item.get(key) != value:
                     item[key] = value
                     changed = True
-    if changed:
+    if changed and persist:
         _save_action_store(store)
     # Item lama tetap tersimpan untuk backward compatibility/history, tetapi
     # pegawai yang kini Normal tidak masuk antrian aktif.
@@ -3476,6 +3490,7 @@ def get_action_center_items(data: pd.DataFrame) -> list[dict]:
 
 def update_action_center_item(warning_id: str, values: dict) -> None:
     """Simpan perubahan dan menambahkan riwayat; tidak pernah menimpa log lama."""
+    require_permission(st.session_state.get("user_role"), UPDATE_ACTION_CENTER)
     store = _load_action_store()
     item = store["items"].get(warning_id)
     if item is None:
@@ -3514,6 +3529,9 @@ def update_action_center_item(warning_id: str, values: dict) -> None:
 def show_action_center_page_focus() -> None:
     """Halaman operasional: antrian, workflow, dan riwayat tindak lanjut."""
     inject_dashboard_css()
+    can_update_actions = has_permission(
+        st.session_state.get("user_role"), UPDATE_ACTION_CENTER
+    )
     data = load_employee_data()
     st.markdown("<h1 style='font-size:30px;font-weight:700;color:#173b63;margin:0'>Action Center</h1>", unsafe_allow_html=True)
     st.markdown("<div style='font-size:14px;color:#64748b;margin:.25rem 0 .8rem'>Kelola proses verifikasi dan tindak lanjut warning presensi pegawai.</div>", unsafe_allow_html=True)
@@ -3657,6 +3675,9 @@ def show_action_center_page_focus() -> None:
 def show_action_center_page_focus() -> None:
     """Workflow operasional tindak lanjut; analitik EWS tetap di halaman EWS."""
     inject_dashboard_css()
+    can_update_actions = has_permission(
+        st.session_state.get("user_role"), UPDATE_ACTION_CENTER
+    )
     st.markdown("""
     <style>
     .action-center-page{color:#0f172a}.action-center-page h1{font-size:30px;color:#173b63;margin:0}
@@ -3672,7 +3693,7 @@ def show_action_center_page_focus() -> None:
     """, unsafe_allow_html=True)
     try:
         data = load_employee_data()
-        all_items = get_action_center_items(data) if not data.empty else []
+        all_items = get_action_center_items(data, persist=can_update_actions) if not data.empty else []
     except Exception:
         LOGGER.exception("Gagal memuat Action Center")
         st.error("Action Center belum berhasil dimuat.")
@@ -3755,25 +3776,34 @@ def show_action_center_page_focus() -> None:
             <div><div class='action-case-label'>Indikator Presensi</div><div class='action-case-reason'>{escape(reason_summary)}</div><div class='action-case-rule'><strong>Status Monitoring:</strong> {escape(str(monitoring['reference_status']))}<br><strong>Ambang Referensi:</strong> {escape(str(monitoring['reference_band']))}</div></div>
             <div><div class='action-case-label'>Terakhir diperbarui</div><div class='action-case-updated'>{updated_label}</div></div>
         </div></article>""", unsafe_allow_html=True)
-        with st.expander("Lihat / Update Tindak Lanjut"):
+        with st.expander("Lihat / Update Tindak Lanjut" if can_update_actions else "Lihat Tindak Lanjut"):
             case_history = [event for event in store_history if str(event.get("warning_id")) == str(item["warning_id"])]
-            st.markdown("<div class='action-update-panel'><div class='action-update-title'>Update Tindak Lanjut</div></div>", unsafe_allow_html=True)
+            panel_title = "Update Tindak Lanjut" if can_update_actions else "Detail Tindak Lanjut"
+            st.markdown(f"<div class='action-update-panel'><div class='action-update-title'>{panel_title}</div></div>", unsafe_allow_html=True)
             st.write(f"Catatan monitoring: {monitoring['monitoring_note']}")
             st.write(f"Dasar monitoring: {monitoring['regulation']} — {monitoring['reference_article'] or 'Monitoring awal'}")
             st.caption(MONITORING_DISCLAIMER)
-            with st.form(f"action_case_{item['warning_id']}"):
-                new_status = st.selectbox("Status Tindak Lanjut", ACTION_WORKFLOW, index=ACTION_WORKFLOW.index(status), format_func=lambda value: ACTION_LABELS[value])
-                saved_date = pd.to_datetime(item.get("followup_date"), errors="coerce")
-                followup_date = st.date_input("Tanggal Tindak Lanjut", value=saved_date.date() if pd.notna(saved_date) else date.today())
-                note = st.text_area("Catatan Tindak Lanjut", value=str(item.get("followup_note") or ""), placeholder="Tuliskan hasil klarifikasi atau tindak lanjut...")
-                saved = st.form_submit_button("Simpan Tindak Lanjut")
-            if saved:
-                try:
-                    update_action_center_item(str(item["warning_id"]), {"action_status": new_status, "followup_note": note.strip(), "followup_date": followup_date.isoformat()})
-                    st.rerun()
-                except Exception:
-                    LOGGER.exception("Gagal menyimpan tindak lanjut %s", item["warning_id"])
-                    st.error("Tindak lanjut belum berhasil disimpan.")
+            if can_update_actions:
+                with st.form(f"action_case_{item['warning_id']}"):
+                    new_status = st.selectbox("Status Tindak Lanjut", ACTION_WORKFLOW, index=ACTION_WORKFLOW.index(status), format_func=lambda value: ACTION_LABELS[value])
+                    saved_date = pd.to_datetime(item.get("followup_date"), errors="coerce")
+                    followup_date = st.date_input("Tanggal Tindak Lanjut", value=saved_date.date() if pd.notna(saved_date) else date.today())
+                    note = st.text_area("Catatan Tindak Lanjut", value=str(item.get("followup_note") or ""), placeholder="Tuliskan hasil klarifikasi atau tindak lanjut...")
+                    saved = st.form_submit_button("Simpan Tindak Lanjut")
+                if saved:
+                    try:
+                        update_action_center_item(str(item["warning_id"]), {"action_status": new_status, "followup_note": note.strip(), "followup_date": followup_date.isoformat()})
+                        st.rerun()
+                    except PermissionError as exc:
+                        st.error(str(exc))
+                    except Exception:
+                        LOGGER.exception("Gagal menyimpan tindak lanjut %s", item["warning_id"])
+                        st.error("Tindak lanjut belum berhasil disimpan.")
+            else:
+                followup_date = pd.to_datetime(item.get("followup_date"), errors="coerce")
+                st.write(f"Status: **{ACTION_LABELS.get(status, status)}**")
+                st.write(f"Tanggal tindak lanjut: **{followup_date.strftime('%d-%m-%Y') if pd.notna(followup_date) else '-'}**")
+                st.write(f"Catatan: {item.get('followup_note') or '-'}")
             st.markdown("<div class='action-panel-divider'></div><div class='action-update-title'>Riwayat Tindak Lanjut</div>", unsafe_allow_html=True)
             if not case_history: st.caption("Belum terdapat riwayat tindak lanjut.")
             for event in case_history:
@@ -4088,6 +4118,9 @@ def _render_audit_processing_tab() -> None:
 
 def show_audit_trail_page() -> None:
     """Audit Trail read-only dengan aktivitas dan monitoring pemrosesan."""
+    if not has_permission(st.session_state.get("user_role"), VIEW_AUDIT):
+        st.error("Akses tidak tersedia untuk peran pengguna Anda.")
+        return
     inject_dashboard_css()
     st.markdown("<h1 style='display:block!important;visibility:visible!important;opacity:1!important;font-size:28px!important;font-weight:700!important;color:#173b63!important;text-align:left!important;margin:0 0 5px!important'>Audit Trail</h1>", unsafe_allow_html=True)
     st.markdown("<div style='color:#64748b;font-size:14px;margin:0 0 14px'>Riwayat aktivitas serta transparansi pemrosesan data presensi.</div>", unsafe_allow_html=True)
@@ -5805,8 +5838,14 @@ def show_early_warning_page_centralized() -> None:
             st.write(f"Catatan: {monitoring['monitoring_note']}")
             st.caption(MONITORING_DISCLAIMER)
         if st.button(f"Lihat Detail {employee['Nama Pegawai']}", key=f"central_ews_detail_{employee['NIP']}"):
-            st.session_state["employee_detail_opd"] = str(employee["Unit Kerja"])
-            st.session_state["employee_detail_employee"] = next((label for label in [f"{employee['Nama Pegawai']} — {employee['NIP']}"]), "")
+            detail_opd = str(employee["Unit Kerja"])
+            detail_employee = f"{employee['Nama Pegawai']} — {employee['NIP']}"
+            detail_period = f"{month} {int(year)}"
+            st.session_state["employee_detail_opd"] = detail_opd
+            st.session_state["employee_detail_employee"] = detail_employee
+            st.session_state["employee_detail_period"] = detail_period
+            st.session_state["_employee_detail_previous_opd"] = detail_opd
+            st.session_state["_employee_detail_previous_employee"] = detail_employee
             st.session_state["navigate_to_page"] = "Detail Pegawai"
             st.rerun()
     st.markdown(f"<div class='central-ews-note'>{escape(MONITORING_DISCLAIMER)} Keterlambatan tetap ditampilkan sebagai indikator tambahan dan tidak dikonversi menjadi hari ketidakhadiran.</div>", unsafe_allow_html=True)
@@ -5821,18 +5860,17 @@ def show_tk_report_page() -> None:
     if not years:
         st.warning("Data tahun laporan tidak tersedia.")
         return
-    default_year = int(years[0])
-    latest_months = data[pd.to_numeric(data["Tahun"], errors="coerce").eq(default_year)]["Bulan"].map(
-        {name: int(number) for number, name in MONTH_NAMES.items()}
-    ).dropna()
-    latest_month = int(latest_months.max()) if not latest_months.empty else 1
-    default_period = f"TW {('I', 'II', 'III', 'IV')[(latest_month - 1) // 3]}"
     period_codes = {"TW I": "TRIWULAN_I", "TW II": "TRIWULAN_II", "TW III": "TRIWULAN_III", "TW IV": "TRIWULAN_IV", "Tahunan": "TAHUNAN"}
 
     defaults = {
-        "tk_report_year": default_year, "tk_report_period": default_period,
-        "tk_report_opd": "Semua OPD", "tk_report_employee_type": "Semua Jenis Pegawai",
+        "tk_report_year": None, "tk_report_period": None,
+        "tk_report_opd": None, "tk_report_employee_type": None,
     }
+    # Kosongkan nilai lama satu kali ketika UI filter baru mulai digunakan.
+    if st.session_state.get("_tk_report_filter_version") != 2:
+        for key in defaults:
+            st.session_state[key] = None
+        st.session_state["_tk_report_filter_version"] = 2
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
 
@@ -5844,7 +5882,6 @@ def show_tk_report_page() -> None:
       .report-preview-card{max-height:560px;overflow:auto;padding:28px;margin-bottom:8px}.report-document-title{text-align:center;font-size:14px;font-weight:750;line-height:1.45;color:#0f172a}.report-document-period{text-align:center;font-size:12px;font-weight:700;margin:10px 0 18px}.report-table{border-collapse:collapse;width:100%;min-width:820px;font-size:11px}.report-table th,.report-table td{border:1px solid #cbd5e1;padding:7px 8px;vertical-align:middle}.report-table th{background:#eaf0f7;color:#173b63;text-align:center}.report-table .opd-row td{background:#f1f5f9;font-weight:750;color:#173b63}.report-preview-note{font-size:12px;color:#64748b;margin:8px 0 24px}.report-export-card{margin-top:24px}.report-export-title{font-size:17px;font-weight:750;color:#173b63}.report-export-meta{font-size:12px;color:#64748b;margin-top:5px}
       [class*="st-key-tk_page_excel"] button,[class*="st-key-tk_page_pdf"] button{border-radius:9px;border:1px solid #bfdbfe;background:#fff;color:#173b63;transition:.18s;min-height:38px}[class*="st-key-tk_page_excel"] button:hover,[class*="st-key-tk_page_pdf"] button:hover{transform:translateY(-1px);border-color:#2563eb;box-shadow:0 5px 12px rgba(37,99,235,.10)}
       [class*="st-key-tk_report_parameter_card"]{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px 20px;box-shadow:0 3px 12px rgba(15,23,42,.04);margin-bottom:24px}
-      [class*="st-key-tk_report_period"] [data-testid="stBaseButton-segmented_controlActive"]{background:#173b63;color:#fff;border-color:#173b63}
       @media(max-width:700px){.report-summary-grid{grid-template-columns:1fr}.report-preview-card{padding:15px}.report-header h1{font-size:26px}}
     </style><main class='report-page'><header class='report-header'><h1>Laporan Ketidakhadiran</h1><p>Menyajikan rekapitulasi ketidakhadiran pegawai berdasarkan OPD dan periode untuk kebutuhan monitoring, evaluasi, dan administrasi.</p></header></main>
     """, unsafe_allow_html=True)
@@ -5856,20 +5893,45 @@ def show_tk_report_page() -> None:
         st.markdown("<div class='report-section-title'>Parameter Laporan</div>", unsafe_allow_html=True)
         filters = st.columns([1, 2, 1.35])
         with filters[0]:
-            chosen_year = st.selectbox("Tahun", years, key="tk_report_year")
-        year_scope = data[pd.to_numeric(data["Tahun"], errors="coerce").eq(chosen_year)]
+            chosen_year = st.selectbox(
+                "Tahun", years, index=None, placeholder="Pilih Tahun",
+                key="tk_report_year",
+            )
+        year_scope = (
+            data[pd.to_numeric(data["Tahun"], errors="coerce").eq(chosen_year)]
+            if chosen_year is not None else data.iloc[0:0]
+        )
         with filters[1]:
-            chosen_opd = st.selectbox("OPD", ["Semua OPD"] + sorted(year_scope["Unit Kerja"].dropna().astype(str).unique()), key="tk_report_opd")
+            chosen_opd = st.selectbox(
+                "OPD", ["Semua OPD"] + sorted(year_scope["Unit Kerja"].dropna().astype(str).unique()),
+                index=None,
+                placeholder="Pilih OPD" if chosen_year is not None else "Pilih Tahun terlebih dahulu",
+                disabled=chosen_year is None,
+                key="tk_report_opd",
+            )
         present_types = set(year_scope.get("Jenis Pegawai", pd.Series(dtype=str)).dropna().astype(str))
         employee_types = [item for item in ["PNS", "PPPK", "Belum Diketahui"] if item in present_types]
         with filters[2]:
-            chosen_type = st.selectbox("Jenis Pegawai", ["Semua Jenis Pegawai"] + employee_types, key="tk_report_employee_type")
+            chosen_type = st.selectbox(
+                "Jenis Pegawai", ["Semua Jenis Pegawai"] + employee_types,
+                index=None,
+                placeholder="Pilih Jenis Pegawai" if chosen_year is not None else "Pilih Tahun terlebih dahulu",
+                disabled=chosen_year is None,
+                key="tk_report_employee_type",
+            )
         period_row = st.columns([5, .7])
         with period_row[0]:
-            chosen_period = st.segmented_control("Periode", list(period_codes), key="tk_report_period")
+            chosen_period = st.selectbox(
+                "Periode", list(period_codes), index=None, placeholder="Pilih Periode",
+                key="tk_report_period",
+            )
         with period_row[1]:
             st.write("")
             st.button("Reset", key="tk_report_reset", on_click=reset_report_parameters, width="stretch")
+
+    if any(value is None for value in (chosen_year, chosen_opd, chosen_type, chosen_period)):
+        st.info("Pilih Tahun, OPD, Jenis Pegawai, dan Periode untuk menampilkan laporan.")
+        return
 
     report_source = apply_filters(
         data,
@@ -5994,11 +6056,17 @@ if not st.session_state.is_logged_in:
     show_login_page()
     st.stop()
 
+current_role = normalize_role(st.session_state.get("user_role"))
+if current_role is None:
+    st.error("Peran pengguna tidak dikenali. Hubungi administrator.")
+    if st.button("Keluar", key="unknown_role_logout"):
+        logout()
+    st.stop()
+st.session_state.user_role = current_role
+
 inject_dashboard_css()
 
 navigation_target = st.session_state.pop("navigate_to_page", None)
-if navigation_target:
-    st.session_state["page_navigation"] = navigation_target
 
 with st.sidebar:
     st.markdown(
@@ -6019,7 +6087,7 @@ with st.sidebar:
         """,
         unsafe_allow_html=True,
     )
-    page_options = {
+    all_page_options = {
         "🏠 Executive Dashboard": "Executive Dashboard",
         "🚨 Early Warning System": "Early Warning System",
         "📊 Analisis Presensi": "Analisis Presensi",
@@ -6034,9 +6102,18 @@ with st.sidebar:
         "🕒 Audit Trail": "Audit Trail",
         "🔐 Manajemen Pengguna": "Manajemen Pengguna",
     }
-    if navigation_target:
-        navigation_target = next((label for label, value in page_options.items() if value == navigation_target), navigation_target)
-        st.session_state["page_navigation"] = navigation_target
+    allowed_pages = set(get_allowed_pages(current_role))
+    page_options = {
+        label: page for label, page in all_page_options.items() if page in allowed_pages
+    }
+    default_label = next(label for label, page in page_options.items() if page == "Executive Dashboard")
+    if navigation_target and can_access_page(current_role, navigation_target):
+        st.session_state["page_navigation"] = next(
+            (label for label, value in page_options.items() if value == navigation_target),
+            default_label,
+        )
+    if st.session_state.get("page_navigation") not in page_options:
+        st.session_state["page_navigation"] = default_label
     selected_page_label = st.radio(
         "Pilih halaman",
         list(page_options),
@@ -6044,6 +6121,10 @@ with st.sidebar:
         key="page_navigation",
     )
 selected_page = page_options[selected_page_label]
+
+if not can_access_page(current_role, selected_page):
+    st.error("Akses tidak tersedia untuk peran pengguna Anda.")
+    st.stop()
 
 if selected_page == "Executive Dashboard":
     show_dashboard_focus()

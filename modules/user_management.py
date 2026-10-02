@@ -19,6 +19,7 @@ from database.auth import (
     update_user,
 )
 from services.activity_log import log_system_activity
+from services.rbac import MANAGE_USERS, has_permission
 
 LOGGER = logging.getLogger(__name__)
 
@@ -57,6 +58,9 @@ def render_user_kpis(users_list: list[dict[str, Any]]) -> None:
 
 def show_user_management_page(engine: Engine) -> None:
     """Tampilan utama modul Manajemen Pengguna."""
+    if not has_permission(st.session_state.get("user_role"), MANAGE_USERS):
+        st.error("Akses tidak tersedia untuk peran pengguna Anda.")
+        return
     st.markdown(
         """
         <div style="margin-bottom: 1.2rem;">
@@ -71,7 +75,7 @@ def show_user_management_page(engine: Engine) -> None:
         unsafe_allow_html=True,
     )
 
-    current_role = st.session_state.get("user_role", "admin").lower()
+    current_role = st.session_state.get("user_role")
     current_user_id = st.session_state.get("user_id")
     current_username = st.session_state.get("username", "")
 
@@ -84,7 +88,7 @@ def show_user_management_page(engine: Engine) -> None:
     render_user_kpis(users_list)
     st.markdown("---")
 
-    is_admin = current_role == "admin"
+    is_admin = has_permission(current_role, MANAGE_USERS)
     if not is_admin:
         st.warning(
             "⚠️ Anda masuk dengan peran non-admin. Anda hanya dapat melihat daftar akun tanpa izin mengubah data pengguna."
