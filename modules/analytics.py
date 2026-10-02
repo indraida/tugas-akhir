@@ -100,7 +100,7 @@ def attendance_rate(data: pd.DataFrame) -> float:
     workdays = float(data["Hari Kerja"].sum())
     # Cuti/DL/WFH adalah alasan sah, bukan ketidakpatuhan. Kepatuhan hanya
     # mengurangi hari kerja dengan TK yang eksplisit dari sumber.
-    compliant = max(workdays - float(data["TK"].sum()), 0.0)
+    compliant = float(data["Status Sah"].sum()) if "Status Sah" in data else max(workdays - float(data["TK"].sum()), 0.0)
     return compliant / workdays * 100 if workdays else 0.0
 
 
@@ -109,9 +109,10 @@ def employee_summary(data: pd.DataFrame) -> pd.DataFrame:
     if data.empty:
         return pd.DataFrame(columns=columns + ["Kepatuhan", "Status Early Warning"])
     result = data.groupby(["NIP", "Nama Pegawai", "Unit Kerja"], as_index=False, dropna=False).agg(
-        {"TK": "sum", "Terlambat": "sum", "Hari Kerja": "sum", "Cuti": "sum", "WFH": "sum", "DL": "sum"}
+        {"TK": "sum", "Terlambat": "sum", "Hari Kerja": "sum", "Cuti": "sum", "WFH": "sum", "DL": "sum", **({"Status Sah": "sum"} if "Status Sah" in data else {})}
     )
-    result["Kepatuhan"] = ((result["Hari Kerja"] - result["TK"]).clip(lower=0) / result["Hari Kerja"].replace(0, pd.NA) * 100).fillna(0)
+    valid = result["Status Sah"] if "Status Sah" in result else (result["Hari Kerja"] - result["TK"]).clip(lower=0)
+    result["Kepatuhan"] = (valid / result["Hari Kerja"].replace(0, pd.NA) * 100).fillna(0)
     result["Status Early Warning"] = result["TK"].map(warning_status)
     result["Prioritas Status"] = result["Status Early Warning"].map(WARNING_PRIORITY).astype(int)
     return result

@@ -68,7 +68,12 @@ def get_engine(database_url: str | None = None) -> Engine:
         raise RuntimeError("DATABASE_URL belum dikonfigurasi.")
     if not url.startswith(("postgresql://", "postgresql+psycopg2://")):
         raise RuntimeError("DATABASE_URL harus menggunakan PostgreSQL.")
-    return _create_cached_engine(url)
+    url_obj = make_url(url)
+    # Nama host service Docker hanya dikenali di jaringan Compose. Saat aplikasi
+    # atau test dijalankan langsung dari Windows, gunakan port PostgreSQL host.
+    if url_obj.host == "db" and not os.path.exists("/.dockerenv"):
+        url_obj = url_obj.set(host="localhost", port=int(os.getenv("POSTGRES_PORT", "5432")))
+    return _create_cached_engine(url_obj.render_as_string(hide_password=False))
 
 
 def check_database_connection(database_url: str | None = None) -> tuple[bool, str]:

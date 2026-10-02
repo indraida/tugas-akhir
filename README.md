@@ -147,6 +147,26 @@ Tingkat Kepatuhan = (Hari Kerja - TK) / Hari Kerja × 100%
 
 ## 🧪 Pengujian / Testing
 
+Tes database menggunakan PostgreSQL, dengan schema sementara yang berbeda untuk
+setiap tes dan dibersihkan setelah tes selesai. Koneksi dibaca dari
+`TEST_DATABASE_URL` jika tersedia, atau `DATABASE_URL` dalam `.env`.
+Saat dijalankan lokal, host Docker `db` otomatis diarahkan ke `localhost` dan
+port `POSTGRES_PORT`. Pengguna database tes harus memiliki izin membuat schema.
+
+Untuk menjalankan tes database dari lingkungan Python lokal:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe scripts/run_postgres_tests.py
+```
+
+Di container, pasang dependensi tes terlebih dahulu:
+
+```bash
+docker compose exec web python -m pip install -r requirements-dev.txt
+docker compose exec web python scripts/run_postgres_tests.py
+```
+
 Jalankan seluruh test suite di dalam container Docker:
 
 ```bash

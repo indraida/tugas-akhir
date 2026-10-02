@@ -41,6 +41,22 @@ def test_prepare_records_preserves_nip_and_existing_attendance_fields():
     assert records[1]["jam_masuk"] is None
 
 
+def test_cltn_tb_and_mpp_are_stored_as_leave():
+    frames = []
+    for offset, code in enumerate(["CLTN", "TB", "MPP"], start=1):
+        row = clean_frame().iloc[[1]].copy()
+        row["Tanggal"] = f"2026-06-{offset:02d}"
+        row["Status"] = f"{code}/{code}"
+        row["Sumber_Datang"] = code
+        row["Sumber_Pulang"] = code
+        frames.append(row)
+
+    records, report = prepare_daily_records(pd.concat(frames, ignore_index=True))
+
+    assert report["rejected"] == 0
+    assert [record["status_presensi"] for record in records] == ["Cuti", "Cuti", "Cuti"]
+
+
 def test_invalid_and_duplicate_rows_are_counted_not_silently_dropped():
     frame = pd.concat([clean_frame(), clean_frame().iloc[[0]]], ignore_index=True)
     frame.loc[1, "Tanggal"] = "bukan-tanggal"

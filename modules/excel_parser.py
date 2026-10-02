@@ -17,6 +17,8 @@ from typing import BinaryIO
 import pandas as pd
 
 from modules.employee_type import add_employee_type_columns
+from modules.attendance_indicators import prepare_daily_indicators
+from services.work_calendar import apply_work_calendar
 
 
 LOGGER = logging.getLogger(__name__)
@@ -293,17 +295,16 @@ def build_dashboard_dataframe(data: pd.DataFrame) -> pd.DataFrame:
     columns = [
         "NIP", "Nama Pegawai", "Unit Kerja", "Tahun", "Bulan", "TK", "Cuti",
         "Terlambat", "Hari Kerja", "Jam Datang", "Hari Dominan", "WFH",
-        "DL", "Jabatan", "Pangkat/Golongan", "Jenis Pegawai", "Jenis Pegawai Source",
+        "DL", "Jabatan", "Pangkat/Golongan", "Jenis Pegawai", "Jenis Pegawai Source", "Status Sah", "Hadir Fisik",
     ]
     if data.empty:
         return pd.DataFrame(columns=columns)
 
-    work = data.copy()
-    source = (work["Sumber_Datang"].fillna("") + "/" + work["Sumber_Pulang"].fillna(""))
-    work["_cuti"] = source.str.contains("CUTI", case=False, na=False)
-    work["_wfh"] = source.str.contains(r"\bWFH\b|\bWFA\b", case=False, regex=True, na=False)
-    work["_dl"] = source.str.contains(r"\bDL\b", case=False, regex=True, na=False)
-    work["_hari_kerja"] = work["Status"].ne("LIBUR")
+    work = prepare_daily_indicators(apply_work_calendar(data))
+    work["_cuti"] = work["Cuti"]
+    work["_wfh"] = work["WFH"]
+    work["_dl"] = work["DL"]
+    work["_hari_kerja"] = work["Wajib Presensi"]
     work["_jam_datang"] = work["Jam_Masuk"].map(_jam_ke_desimal)
     work.loc[work["Sumber_Datang"].ne("MESIN"), "_jam_datang"] = None
 
@@ -321,6 +322,8 @@ def build_dashboard_dataframe(data: pd.DataFrame) -> pd.DataFrame:
             "TK": int(group["TK"].sum()), "Cuti": int(group["_cuti"].sum()),
             "Terlambat": int(group["Terlambat"].sum()),
             "Hari Kerja": int(group["_hari_kerja"].sum()),
+            "Status Sah": int(group["Status Sah"].sum()),
+            "Hadir Fisik": int(group["Hadir Fisik"].sum()),
             "Jam Datang": round(float(average_arrival), 2) if pd.notna(average_arrival) else 0.0,
             "Hari Dominan": dominant_day, "WFH": int(group["_wfh"].sum()),
             "DL": int(group["_dl"].sum()), "Jabatan": "-", "Pangkat/Golongan": "-",

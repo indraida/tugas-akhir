@@ -4,7 +4,6 @@ import io
 from datetime import datetime
 import pandas as pd
 import pytest
-from sqlalchemy import create_engine
 
 from database.opd import create_opd, init_opd_schema
 from database.pegawai import (
@@ -24,9 +23,9 @@ from database.pegawai import (
 
 
 @pytest.fixture
-def in_memory_engine():
-    """Engine SQLite in-memory untuk testing schema & CRUD Pegawai."""
-    engine = create_engine("sqlite:///:memory:")
+def in_memory_engine(postgres_engine):
+    """Engine PostgreSQL dengan schema sementara untuk testing schema & CRUD Pegawai."""
+    engine = postgres_engine
     init_opd_schema(engine)
     init_pegawai_schema(engine)
     return engine

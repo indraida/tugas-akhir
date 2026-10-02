@@ -7,13 +7,9 @@ import logging
 import pandas as pd
 
 from services.work_calendar import build_work_calendar
+from modules.attendance_indicators import prepare_daily_indicators
 
 LOGGER = logging.getLogger(__name__)
-
-# Nama/kode ini berasal dari kontrak source presensi yang sudah ada.
-VALID_EXACT_STATUSES = {"HADIR", "WFH", "WFA", "DL", "SAKIT", "IZIN", "SL", "SK", "MR", "PBT"}
-VALID_CODE_PATTERN = r"\b(?:MESIN|WFH|WFA|DL|SAKIT|IZIN|SL|SK|MR|PBT)\b|CUTI"
-
 
 def calculate_monthly_attendance_compliance(
     daily_data: pd.DataFrame,
@@ -57,19 +53,11 @@ def calculate_monthly_attendance_compliance(
     source = source.drop_duplicates("_tanggal", keep="first").set_index("_tanggal")
     required = source[source.index.isin(required_dates)].copy()
 
-    status = required["Status"].fillna("").astype(str).str.strip().str.upper()
-    arrival = required.get("Sumber_Datang", pd.Series("", index=required.index)).fillna("").astype(str).str.upper()
-    departure = required.get("Sumber_Pulang", pd.Series("", index=required.index)).fillna("").astype(str).str.upper()
-    codes = arrival + "/" + departure
-    tk_mask = required.get("TK", pd.Series(False, index=required.index)).fillna(False).astype(bool) | status.eq("TK") | status.eq("TK/TK")
-    classified = status.isin(VALID_EXACT_STATUSES) | codes.str.contains(VALID_CODE_PATTERN, regex=True, na=False)
-    valid_mask = classified & ~tk_mask
-    physical_mask = (
-        (status.isin({"HADIR", "TERLAMBAT", "SL", "SK", "MR", "PBT"}) | codes.str.contains(r"\b(?:MESIN|SL|SK|MR|PBT)\b", regex=True, na=False))
-        & ~status.isin({"CUTI", "WFH", "WFA", "DL", "SAKIT", "IZIN"})
-        & ~codes.str.contains(r"CUTI|\bWFH\b|\bWFA\b|\bDL\b|\bSAKIT\b|\bIZIN\b", regex=True, na=False)
-        & ~tk_mask
-    )
+    required["wajib_presensi"] = True
+    indicators = prepare_daily_indicators(required)
+    valid_mask = indicators["Status Sah"].astype(bool)
+    tk_mask = indicators["TK"].astype(bool)
+    physical_mask = indicators["Hadir Fisik"].astype(bool)
     valid_dates = set(required.index[valid_mask])
     tk_dates = set(required.index[tk_mask])
     unclassified_dates = required_dates.difference(valid_dates).difference(tk_dates)

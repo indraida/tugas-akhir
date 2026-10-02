@@ -13,6 +13,7 @@ atau via Docker:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 import sys
 import time
 from datetime import date
@@ -36,6 +37,7 @@ from database.repository import (
     presensi_harian,
     save_daily_attendance_to_db,
 )
+from database.work_calendar import seed_work_calendar_from_csv
 from modules.excel_parser import load_semua_presensi
 
 logging.basicConfig(
@@ -53,6 +55,15 @@ def seed_all_periods(engine: Engine, year: int = 2026) -> list[int]:
         pid = get_or_create_periode(engine, month, year)
         created_ids.append(pid)
     return created_ids
+
+
+def seed_all_work_calendars(engine: Engine) -> int:
+    """Migrasikan seluruh master kalender CSV lama ke PostgreSQL."""
+    calendar_dir = Path(__file__).resolve().parent.parent / "data" / "kalender"
+    return sum(
+        seed_work_calendar_from_csv(engine, path)
+        for path in sorted(calendar_dir.glob("kalender_kerja_*.csv"))
+    )
 
 
 def run_migrations_and_seeds(engine: Engine | None = None) -> dict[str, Any]:
@@ -103,8 +114,14 @@ def run_migrations_and_seeds(engine: Engine | None = None) -> dict[str, Any]:
         LOGGER.info("    ✅ Master periode aktif: %d periode", len(all_periods))
         results["total_periode"] = len(all_periods)
 
-        # 5. Migrasi & Sinkronisasi Existing Data Presensi dari Excel (data/)
-        LOGGER.info("5️⃣  Membaca dan memigrasikan data presensi dari file Excel (data/)...")
+        # 5. Migrasi master kalender lama; aplikasi selanjutnya membaca PostgreSQL.
+        LOGGER.info("5️⃣  Memigrasikan master Kalender Kerja ke PostgreSQL...")
+        total_calendar = seed_all_work_calendars(engine)
+        LOGGER.info("    ✅ Kalender kerja tersimpan: %d tanggal", total_calendar)
+        results["total_kalender_kerja"] = total_calendar
+
+        # 6. Migrasi & Sinkronisasi Existing Data Presensi dari Excel (data/)
+        LOGGER.info("6️⃣  Membaca dan memigrasikan data presensi dari file Excel (data/)...")
         clean_daily = load_semua_presensi()
         total_excel_rows = len(clean_daily)
         LOGGER.info("    📄 Total baris data presensi terbaca: %d baris", total_excel_rows)
@@ -149,6 +166,7 @@ def run_migrations_and_seeds(engine: Engine | None = None) -> dict[str, Any]:
         LOGGER.info("   - Master OPD (opd)          : %d", results["total_opds"])
         LOGGER.info("   - Master Pegawai (pegawai)  : %d", results["total_pegawai"])
         LOGGER.info("   - Master Periode (periode)  : %d", results["total_periode"])
+        LOGGER.info("   - Kalender Kerja             : %d", results["total_kalender_kerja"])
         LOGGER.info("   - Presensi Relasional       : %d", results["total_presensi"])
         LOGGER.info("   - Presensi Harian (ETL)     : %d", results["total_presensi_harian"])
         LOGGER.info("============================================================")

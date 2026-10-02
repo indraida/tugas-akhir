@@ -73,3 +73,14 @@ def test_additional_source_codes_are_valid_physical_attendance():
     assert summary["valid_status_days"] == 4
     assert summary["physical_attendance_days"] == 4
     assert summary["compliance_percentage"] == 100.0
+
+
+def test_cltn_tb_and_mpp_are_valid_nonphysical_leave():
+    source = rows(["CLTN", "TB", "MPP"])
+
+    summary = summarize_attendance_indicators(source)
+
+    assert summary["valid_status_days"] == 3
+    assert summary["leave_days"] == 3
+    assert summary["physical_attendance_days"] == 0
+    assert summary["compliance_percentage"] == 100.0

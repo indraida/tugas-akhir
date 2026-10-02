@@ -158,7 +158,7 @@ def calculate_ytd_tk(employee_rows: pd.DataFrame, year: int, active_month: str |
     cutoff = int(active_month) if str(active_month).isdigit() else month_names.get(str(active_month), 0)
     source = employee_rows.copy()
     if "Tanggal" in source:
-        source["Tanggal"] = pd.to_datetime(source["Tanggal"], errors="coerce")
+        source["Tanggal"] = pd.to_datetime(source["Tanggal"], errors="coerce").dt.normalize()
         source = source[source["Tanggal"].dt.year.eq(int(year)) & source["Tanggal"].dt.month.le(cutoff)]
         if {"wajib_presensi", "eligible_tk"}.issubset(source.columns):
             source = source[source["wajib_presensi"].fillna(False).astype(bool) & source["eligible_tk"].fillna(False).astype(bool)]
@@ -183,7 +183,7 @@ def calculate_consecutive_unexcused_days(daily_rows: pd.DataFrame, year: int,
     if daily_rows.empty or "Tanggal" not in daily_rows or not ({"TK"} <= set(daily_rows.columns) or "Status" in daily_rows):
         return None
     source = daily_rows.copy()
-    source["Tanggal"] = pd.to_datetime(source["Tanggal"], errors="coerce")
+    source["Tanggal"] = pd.to_datetime(source["Tanggal"], errors="coerce").dt.normalize()
     month_names = {name: index for index, name in enumerate(
         ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"], 1
     )}
@@ -197,8 +197,15 @@ def calculate_consecutive_unexcused_days(daily_rows: pd.DataFrame, year: int,
     tk_values = source["TK"] if "TK" in source else source["Status"].astype(str).str.upper().eq("TK")
     source["_is_tk"] = tk_values.fillna(False).astype(bool)
     source = source.groupby("Tanggal", as_index=False)["_is_tk"].max().sort_values("Tanggal")
+    # Missing required workdays break the streak; weekends and holidays do not.
+    from services.work_calendar import build_work_calendar
+    calendar = build_work_calendar(int(year), allow_pdf_extraction=False)
+    calendar = calendar[calendar["tanggal"].dt.month.le(cutoff)]
+    required_dates = calendar.loc[calendar["wajib_presensi"], "tanggal"]
+    observed = source.set_index("Tanggal")["_is_tk"]
+    values = observed.reindex(required_dates, fill_value=False)
     maximum = streak = 0
-    for is_tk in source["_is_tk"]:
+    for is_tk in values:
         streak = streak + 1 if is_tk else 0
         maximum = max(maximum, streak)
     return maximum

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 
 from database.auth import list_users, seed_default_users
 from database.opd import list_opds, seed_default_opds
@@ -12,8 +12,8 @@ from database.migrate_and_seed import seed_all_periods
 from database.schema import metadata
 
 
-def test_migration_and_seed_pipeline() -> None:
-    engine = create_engine("sqlite:///:memory:")
+def test_migration_and_seed_pipeline(postgres_engine) -> None:
+    engine = postgres_engine
     
     # 1. Create Schema
     metadata.create_all(engine)

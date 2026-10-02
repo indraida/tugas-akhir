@@ -59,7 +59,7 @@ from services.work_calendar import build_work_calendar, load_calendar_overrides,
 from services.activity_log import APP_TIMEZONE, load_system_activities, log_system_activity
 from modules.attendance_compliance import calculate_monthly_attendance_compliance
 from modules.attendance_trend import TREND_METRICS, aggregate_attendance_trend
-from modules.attendance_indicators import prepare_daily_indicators, summarize_attendance_indicators
+from modules.attendance_indicators import lateness_by_weekday, prepare_daily_indicators, summarize_attendance_indicators
 from modules.display import format_percentage_exact, safe_display
 from modules.user_management import show_user_management_page
 from modules.opd_management import show_opd_management_page
@@ -331,7 +331,7 @@ def _epresensi_to_dashboard(raw: pd.DataFrame, bulan: str, nip: str) -> pd.DataF
 
     is_wfh = source.str.contains("WFH", na=False)
     is_dl = source.str.contains(r"DINAS LUAR|\bDL\b", regex=True, na=False)
-    is_leave = source.str.contains(r"CUTI|IZIN|SAKIT", regex=True, na=False)
+    is_leave = source.str.contains(r"CUTI|IZIN|SAKIT|\b(?:CLTN|TB|MPP)\b", regex=True, na=False)
     is_tk = source.str.contains(r"TANPA KETERANGAN|\bTK\b", regex=True, na=False) | (
         arrival.isna() & ~(is_wfh | is_dl | is_leave)
     )
@@ -2974,7 +2974,7 @@ def show_employee_detail_page() -> None:
         """, unsafe_allow_html=True)
 
     pattern_days = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
-    day_counts = visible.groupby("Hari Dominan")["Terlambat"].sum().reindex(pattern_days, fill_value=0)
+    day_counts = lateness_by_weekday(selected_daily).reindex(pattern_days, fill_value=0)
     st.markdown("<div class='section-title'>Pola Presensi</div>", unsafe_allow_html=True)
     if int(day_counts.sum()) == 0:
         st.info("Tidak terdapat kejadian keterlambatan pada periode yang dipilih.")
@@ -2985,7 +2985,7 @@ def show_employee_detail_page() -> None:
             st.markdown("**Hari Keterlambatan Dominan**")
             st.markdown(f"<div style='font-size:20px;font-weight:700;color:#102a43'>{peak_day}</div><div style='color:#64748b'>{int(day_counts.max())} keterlambatan</div>", unsafe_allow_html=True)
         with day_chart_col:
-            day_frame = day_counts.rename("Keterlambatan").reset_index().rename(columns={"Hari Dominan": "Hari"})
+            day_frame = day_counts.rename_axis("Hari").rename("Keterlambatan").reset_index()
             day_chart = alt.Chart(day_frame).mark_bar(color="#f97316").encode(y=alt.Y("Hari:N", sort=pattern_days, title=None), x=alt.X("Keterlambatan:Q", title="Kali"), tooltip=["Hari:N", "Keterlambatan:Q"]).properties(height=180)
             st.altair_chart(day_chart, use_container_width=True)
 

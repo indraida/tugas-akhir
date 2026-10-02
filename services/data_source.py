@@ -36,7 +36,7 @@ def postgres_to_canonical(frame: pd.DataFrame) -> pd.DataFrame:
     source = frame.copy()
     dates = pd.to_datetime(source["tanggal"], errors="coerce")
     status = source["status_presensi"].fillna("").astype(str)
-    status_upper = status.str.upper()
+    status_upper = status.str.strip().str.upper()
     result = pd.DataFrame({
         "NIP": source["nip"].astype(str),
         "Nama": source["nama_pegawai"].fillna("-"),
@@ -45,9 +45,9 @@ def postgres_to_canonical(frame: pd.DataFrame) -> pd.DataFrame:
         "Tanggal": dates,
         "Jam_Masuk": source["jam_masuk"].map(lambda value: value.strftime("%H:%M") if hasattr(value, "strftime") else ""),
         "Jam_Pulang": source["jam_pulang"].map(lambda value: value.strftime("%H:%M") if hasattr(value, "strftime") else ""),
-        "Status": status_upper.map(lambda value: "LIBUR" if value == "LIBUR" else value or "HADIR"),
-        "Sumber_Datang": status_upper.map(lambda value: value if value in {"TK", "CUTI", "WFH", "WFA", "DL"} else "MESIN"),
-        "Sumber_Pulang": status_upper.map(lambda value: value if value in {"TK", "CUTI", "WFH", "WFA", "DL"} else "MESIN"),
+        "Status": status_upper,
+        "Sumber_Datang": status_upper.map(lambda value: "MESIN" if value in {"HADIR", "TERLAMBAT"} else value.split("/")[0]),
+        "Sumber_Pulang": status_upper.map(lambda value: "MESIN" if value in {"HADIR", "TERLAMBAT"} else value.split("/")[-1]),
         "Menit_Terlambat": pd.to_numeric(source["keterlambatan_menit"], errors="coerce").fillna(0).astype(int),
         "Tahun": dates.dt.year,
         "Bulan": dates.dt.month,
@@ -55,7 +55,7 @@ def postgres_to_canonical(frame: pd.DataFrame) -> pd.DataFrame:
         "Hari": dates.dt.dayofweek.map(DAY_NAMES),
         "Terlambat": status_upper.eq("TERLAMBAT") | pd.to_numeric(source["keterlambatan_menit"], errors="coerce").fillna(0).gt(0),
         "Pulang_Awal": False,
-        "TK": status_upper.eq("TK"),
+        "TK": status_upper.isin({"TK", "TK/TK"}),
         "Presensi_Tidak_Lengkap": False,
         "Tidak_Absen_Masuk": False,
         "Tidak_Absen_Pulang": False,

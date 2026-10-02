@@ -2,7 +2,6 @@
 
 from datetime import datetime
 import pytest
-from sqlalchemy import create_engine
 
 from database.auth import (
     authenticate_user,
@@ -22,9 +21,9 @@ from database.auth import (
 
 
 @pytest.fixture
-def in_memory_engine():
-    """Engine SQLite in-memory untuk testing schema & CRUD auth secara isolated."""
-    engine = create_engine("sqlite:///:memory:")
+def in_memory_engine(postgres_engine):
+    """Engine PostgreSQL dengan schema sementara untuk testing schema & CRUD auth secara isolated."""
+    engine = postgres_engine
     init_auth_schema(engine)
     return engine
 

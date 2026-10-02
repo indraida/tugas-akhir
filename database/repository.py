@@ -43,6 +43,8 @@ Index("idx_presensi_periode", presensi_harian.c.periode_tahun, presensi_harian.c
 
 def create_schema(engine: Engine) -> None:
     metadata.create_all(engine)
+    from database.work_calendar import init_work_calendar_schema
+    init_work_calendar_schema(engine)
     from database.auth import init_auth_schema
     init_auth_schema(engine)
     from database.opd import init_opd_schema
@@ -70,7 +72,7 @@ def _canonical_status(frame: pd.DataFrame) -> pd.Series:
     result.loc[frame["Status"].fillna("").astype(str).str.upper().eq("LIBUR")] = "Libur"
     result.loc[source.str.contains(r"\bWFH\b|\bWFA\b", regex=True)] = "WFH"
     result.loc[source.str.contains(r"\bDL\b", regex=True)] = "DL"
-    result.loc[source.str.contains("CUTI", regex=False)] = "Cuti"
+    result.loc[source.str.contains(r"\b(?:CLTN|TB|MPP)\b|CUTI", regex=True)] = "Cuti"
     result.loc[frame["TK"].fillna(False).astype(bool)] = "TK"
     result.loc[frame["Terlambat"].fillna(False).astype(bool) & result.eq("Hadir")] = "Terlambat"
     return result

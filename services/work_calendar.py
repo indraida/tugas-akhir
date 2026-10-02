@@ -1,4 +1,4 @@
-"""Master kalender kerja dari CSV tervalidasi yang diturunkan dari dokumen resmi."""
+"""Logika kalender kerja dengan master tanggal khusus dari PostgreSQL."""
 
 from __future__ import annotations
 
@@ -12,6 +12,10 @@ import re
 import shutil
 
 import pandas as pd
+from sqlalchemy.engine import Engine
+
+from database.connection import get_engine
+from database.work_calendar import list_work_calendar, replace_work_calendar
 
 LOGGER = logging.getLogger(__name__)
 
@@ -38,11 +42,6 @@ MONTH_NUMBERS = {
          "Agustus", "September", "Oktober", "November", "Desember"], 1
     )
 }
-
-
-def _calendar_path(year: int, data_dir: str | Path | None = None) -> Path:
-    directory = CALENDAR_DIR if data_dir is None else Path(data_dir)
-    return directory / f"kalender_kerja_{int(year)}.csv"
 
 
 def _official_document_path(year: int, data_dir: str | Path | None = None) -> Path | None:
@@ -90,14 +89,11 @@ def _tesseract_command() -> str:
     return command
 
 
-def _read_calendar_file(path: Path, year: int) -> pd.DataFrame:
-    source = pd.read_csv(path, dtype=str).fillna("")
+def _database_calendar(year: int, engine: Engine | None = None) -> pd.DataFrame:
+    """Baca dan validasi tanggal khusus dari tabel kalender_kerja."""
+    source = list_work_calendar(engine or get_engine(), int(year))
     if source.empty:
         return _empty_calendar()
-    required = {"tanggal", "jenis_hari", "keterangan", "dasar_hukum"}
-    missing = required.difference(source.columns)
-    if missing:
-        raise ValueError(f"Kolom kalender tidak tersedia: {', '.join(sorted(missing))}")
     source["tanggal"] = pd.to_datetime(source["tanggal"], errors="coerce").dt.normalize()
     if source["tanggal"].isna().any():
         raise ValueError("Master kalender memuat tanggal yang tidak valid")
@@ -105,26 +101,20 @@ def _read_calendar_file(path: Path, year: int) -> pd.DataFrame:
     invalid = sorted(set(source["jenis_hari"]).difference(DAY_RULES))
     if invalid:
         raise ValueError(f"Jenis hari tidak dikenal: {', '.join(invalid)}")
-    duplicates = source[source.duplicated("tanggal", keep=False)]
-    if not duplicates.empty:
-        dates = duplicates["tanggal"].dt.strftime("%Y-%m-%d").unique()
-        raise ValueError("Konflik tanggal duplicate pada master kalender: " + ", ".join(dates))
+    if source["tanggal"].duplicated().any():
+        raise ValueError("Konflik tanggal duplicate pada master kalender")
     if not source["tanggal"].dt.year.eq(int(year)).all():
         raise ValueError(f"Master kalender {year} memuat tanggal dari tahun lain")
-    rule_fields = {"is_hari_kerja", "wajib_presensi", "eligible_tk"}
     for field in CALENDAR_COLUMNS:
         if field not in source:
-            source[field] = False if field in rule_fields else ""
-    # Nilai aturan selalu dihitung kembali dari jenis_hari; jangan mempertahankan
-    # dtype string hasil pembacaan CSV untuk kolom boolean.
-    for field in rule_fields:
-        source[field] = False
-    source["tahun"] = int(year)
+            source[field] = False if field in {"is_hari_kerja", "wajib_presensi", "eligible_tk"} else ""
     for kind, values in DAY_RULES.items():
         mask = source["jenis_hari"].eq(kind)
         source.loc[mask, "is_hari_kerja"] = values[0]
         source.loc[mask, "wajib_presensi"] = values[1]
         source.loc[mask, "eligible_tk"] = values[2]
+    source["tahun"] = int(year)
+    source["source"] = "PostgreSQL"
     return source[CALENDAR_COLUMNS]
 
 
@@ -270,41 +260,45 @@ def extract_calendar_from_pdf(
 
 def load_calendar_overrides(
     year: int, data_dir: str | Path | None = None, refresh: bool = False,
-    allow_pdf_extraction: bool = True,
+    allow_pdf_extraction: bool = True, engine: Engine | None = None,
 ) -> pd.DataFrame:
-    """Utamakan CSV; ekstrak PDF hanya bila CSV tervalidasi belum tersedia."""
-    calendar_path = _calendar_path(year, data_dir)
+    """Baca master dari PostgreSQL; PDF hanya menjadi sumber pembaruan opsional."""
     document_path = _official_document_path(year, data_dir)
-    existing = _empty_calendar()
-    if calendar_path.exists() and calendar_path.stat().st_size > 0:
-        existing = _read_calendar_file(calendar_path, year)
+    database_engine = engine or get_engine()
+    database_warning = ""
+    try:
+        existing = _database_calendar(year, database_engine)
+    except Exception as exc:
+        if engine is not None:
+            raise
+        LOGGER.warning("Kalender PostgreSQL tidak dapat dimuat untuk tahun %s: %s", year, exc)
+        existing = _empty_calendar()
+        database_warning = f"Kalender PostgreSQL tahun {int(year)} belum dapat dimuat."
     _, audit_path = _ocr_cache_paths(year, data_dir)
     cached_audit = _read_audit(audit_path)
     fingerprint_matches = bool(
         document_path
         and cached_audit.get("fingerprint") == _pdf_fingerprint(document_path)
     )
-    if not existing.empty and (
-        not allow_pdf_extraction or (not refresh and (document_path is None or fingerprint_matches))
-    ):
+    if not existing.empty and (not allow_pdf_extraction or not refresh or fingerprint_matches):
         existing.attrs.update({
             "official_available": True, "warning": "",
-            "source_path": str(calendar_path),
+            "source_path": "PostgreSQL:kalender_kerja",
             "document_path": str(document_path) if document_path else "",
             "extraction_audit": cached_audit,
         })
         return existing
     if document_path is None or not allow_pdf_extraction:
         result = _empty_calendar()
-        warning = (
+        warning = database_warning or (
             f"Dokumen SE tahun {int(year)} belum tersedia."
             if document_path is None
-            else f"Kalender hasil ekstraksi tahun {int(year)} belum tersedia."
+            else f"Kalender PostgreSQL tahun {int(year)} belum tersedia."
         )
         result.attrs.update({
             "official_available": False,
             "warning": warning,
-            "source_path": str(calendar_path), "document_path": "",
+            "source_path": "PostgreSQL:kalender_kerja", "document_path": "",
         })
         return result
     try:
@@ -318,9 +312,8 @@ def load_calendar_overrides(
             audit["retained_calendar_count"] = len(existing)
             audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
             result = existing
-        calendar_path.parent.mkdir(parents=True, exist_ok=True)
-        result.to_csv(calendar_path, index=False, date_format="%Y-%m-%d")
-        result = _read_calendar_file(calendar_path, year)
+        replace_work_calendar(database_engine, result)
+        result = _database_calendar(year, database_engine)
         result.attrs["extraction_audit"] = audit
         warning = ""
     except Exception as exc:
@@ -329,15 +322,16 @@ def load_calendar_overrides(
         result.attrs["extraction_error"] = str(exc)
     result.attrs.update({
         "official_available": not result.empty, "warning": warning,
-        "source_path": str(calendar_path), "document_path": str(document_path),
+        "source_path": "PostgreSQL:kalender_kerja", "document_path": str(document_path),
     })
     return result
 
 
 def build_work_calendar(
     year: int, data_dir: str | Path | None = None, allow_pdf_extraction: bool = True,
+    engine: Engine | None = None,
 ) -> pd.DataFrame:
-    """Bangun setahun kalender; aturan resmi dari CSV mengalahkan pola mingguan."""
+    """Bangun setahun kalender; tanggal khusus PostgreSQL mengalahkan pola mingguan."""
     dates = pd.date_range(f"{int(year)}-01-01", f"{int(year)}-12-31", freq="D")
     result = pd.DataFrame({"tanggal": dates, "jenis_hari": "HARI_KERJA"})
     result.loc[dates.dayofweek >= 5, "jenis_hari"] = "AKHIR_PEKAN"
@@ -349,7 +343,7 @@ def build_work_calendar(
     result["source_url"] = ""
     result["retrieved_at"] = ""
     overrides = load_calendar_overrides(
-        year, data_dir, allow_pdf_extraction=allow_pdf_extraction
+        year, data_dir, allow_pdf_extraction=allow_pdf_extraction, engine=engine
     )
     if not overrides.empty:
         override_map = overrides.set_index("tanggal")
@@ -363,7 +357,7 @@ def build_work_calendar(
 
 
 def summarize_work_calendar_period(
-    year_month_pairs, data_dir: str | Path | None = None,
+    year_month_pairs, data_dir: str | Path | None = None, engine: Engine | None = None,
 ) -> dict[str, int]:
     """Hitung tanggal kalender unik untuk pasangan tahun-bulan terpilih."""
     periods = sorted({(int(year), int(month)) for year, month in year_month_pairs})
@@ -371,7 +365,7 @@ def summarize_work_calendar_period(
     if not periods:
         return empty
     calendars = [
-        build_work_calendar(year, data_dir, allow_pdf_extraction=False)
+        build_work_calendar(year, data_dir, allow_pdf_extraction=False, engine=engine)
         for year in sorted({year for year, _ in periods})
     ]
     calendar = pd.concat(calendars, ignore_index=True)
@@ -389,34 +383,34 @@ def summarize_work_calendar_period(
     }
 
 
-def get_calendar_day(value: object, data_dir: str | Path | None = None) -> dict[str, object]:
+def get_calendar_day(value: object, data_dir: str | Path | None = None, engine: Engine | None = None) -> dict[str, object]:
     date = pd.Timestamp(value).normalize()
-    return build_work_calendar(date.year, data_dir).set_index("tanggal").loc[date].to_dict()
+    return build_work_calendar(date.year, data_dir, engine=engine).set_index("tanggal").loc[date].to_dict()
 
 
-def is_workday(value: object, data_dir: str | Path | None = None) -> bool:
-    return bool(get_calendar_day(value, data_dir)["is_hari_kerja"])
+def is_workday(value: object, data_dir: str | Path | None = None, engine: Engine | None = None) -> bool:
+    return bool(get_calendar_day(value, data_dir, engine)["is_hari_kerja"])
 
 
-def is_attendance_required(value: object, data_dir: str | Path | None = None) -> bool:
-    return bool(get_calendar_day(value, data_dir)["wajib_presensi"])
+def is_attendance_required(value: object, data_dir: str | Path | None = None, engine: Engine | None = None) -> bool:
+    return bool(get_calendar_day(value, data_dir, engine)["wajib_presensi"])
 
 
-def is_tk_eligible(value: object, data_dir: str | Path | None = None) -> bool:
-    day = get_calendar_day(value, data_dir)
+def is_tk_eligible(value: object, data_dir: str | Path | None = None, engine: Engine | None = None) -> bool:
+    day = get_calendar_day(value, data_dir, engine)
     return bool(day["is_hari_kerja"] and day["wajib_presensi"] and day["eligible_tk"])
 
 
-def apply_work_calendar(frame: pd.DataFrame, data_dir: str | Path | None = None) -> pd.DataFrame:
+def apply_work_calendar(frame: pd.DataFrame, data_dir: str | Path | None = None, engine: Engine | None = None) -> pd.DataFrame:
     """Anotasi data resmi tanpa mengubah Status/TK presensi mentah."""
     result = frame.copy()
     if result.empty or "Tanggal" not in result:
         return result
     dates = pd.to_datetime(result["Tanggal"], errors="coerce").dt.normalize()
-    # Jalur pemuatan presensi hanya membaca CSV. Ekstraksi PDF merupakan urusan
+    # Jalur pemuatan presensi hanya membaca PostgreSQL. Ekstraksi PDF merupakan urusan
     # halaman Master Kalender Kerja dan tidak dijalankan pada rerun dashboard.
     calendars = [
-        build_work_calendar(int(year), data_dir, allow_pdf_extraction=False)
+        build_work_calendar(int(year), data_dir, allow_pdf_extraction=False, engine=engine)
         for year in sorted(dates.dropna().dt.year.unique())
     ]
     calendar = pd.concat(calendars, ignore_index=True) if calendars else _empty_calendar()

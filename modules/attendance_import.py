@@ -49,7 +49,7 @@ def _reason_series(frame: pd.DataFrame) -> pd.Series:
     # ini tidak memperkenalkan status aplikasi baru.
     allowed_statuses = {
         "MESIN", "HADIR", "TK", "CUTI", "CUTI BERSAMA", "CUTIBESAR",
-        "WFH", "WFA", "DL", "LIBUR", "CLTN", "MR", "PBT", "SK", "SL", "TB",
+        "WFH", "WFA", "DL", "LIBUR", "CLTN", "MR", "PBT", "SK", "SL", "TB", "MPP",
     }
     invalid_status = ~source_in.fillna("").isin(allowed_statuses) | ~source_out.fillna("").isin(allowed_statuses)
     duplicate = frame.assign(_nip=nip, _date=dates).duplicated(["_nip", "_date"], keep=False)

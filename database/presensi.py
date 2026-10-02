@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import (
     BigInteger, Column, Date, DateTime, ForeignKey, Index,
-    Integer, String, Table, Time, UniqueConstraint, func, select, update,
+    Integer, String, Table, Time, UniqueConstraint, func, literal_column, select, update,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
@@ -176,6 +176,7 @@ def save_presensi_dataframe_to_db(frame: pd.DataFrame, engine: Engine) -> dict[s
 
     # Eksekusi Batch UPSERT ke PostgreSQL dalam chunks
     chunk_size = 1000
+    inserted_count = updated_count = 0
     with engine.begin() as conn:
         for i in range(0, len(deduped_records), chunk_size):
             chunk = deduped_records[i : i + chunk_size]
@@ -192,12 +193,18 @@ def save_presensi_dataframe_to_db(frame: pd.DataFrame, engine: Engine) -> dict[s
                     "waktu_update": func.now(),
                 },
             )
-            conn.execute(stmt)
+            # PostgreSQL returns xmax=0 for inserted rows; conflict updates
+            # return a nonzero xmax, including updates with unchanged values.
+            outcomes = conn.execute(
+                stmt.returning(literal_column("xmax = 0").label("was_inserted"))
+            ).scalars().all()
+            inserted_count += sum(bool(value) for value in outcomes)
+            updated_count += sum(not bool(value) for value in outcomes)
 
     return {
         "processed": len(frame),
-        "inserted": len(deduped_records),
-        "updated": 0,
+        "inserted": inserted_count,
+        "updated": updated_count,
         "rejected": rejected_count,
     }
 

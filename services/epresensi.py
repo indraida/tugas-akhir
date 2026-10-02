@@ -146,7 +146,7 @@ def _normalisasi_bulanan(raw: pd.DataFrame, bulan: str, tahun: str, nip: str, na
     days = raw.get("hari", pd.Series("", index=raw.index)).map({"Sen": "Senin", "Sel": "Selasa", "Rab": "Rabu", "Kam": "Kamis", "Jum": "Jumat"}).fillna("-")
     is_wfh = source.str.contains("WFH", na=False)
     is_dl = source.str.contains(r"DINAS LUAR|\bDL\b", regex=True, na=False)
-    is_leave = source.str.contains(r"CUTI|IZIN|SAKIT", regex=True, na=False)
+    is_leave = source.str.contains(r"CUTI|IZIN|SAKIT|\b(?:CLTN|TB|MPP)\b", regex=True, na=False)
     is_tk = source.str.contains(r"TANPA KETERANGAN|\bTK\b", regex=True, na=False) | (arrival.isna() & ~(is_wfh | is_dl | is_leave))
     actual_arrival = arrival[~(is_wfh | is_dl | is_leave | is_tk)]
     average_arrival = actual_arrival.dt.hour.add(actual_arrival.dt.minute.div(60)).mean() if not actual_arrival.empty else 0.0
